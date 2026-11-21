@@ -309,6 +309,10 @@ export function assemblePrintReadyHtml(
   const titleFontEm = getAdaptiveTitleScaleEm(mainTitleBnRaw);
   const mainTitleBn = escapeHtml(mainTitleBnRaw);
   const subTitleBn = escapeHtml(subTitleBnRaw);
+  const safeCoverUrl =
+    project.coverImageDataUrl && isSafeAssetDataUrl(project.coverImageDataUrl)
+      ? project.coverImageDataUrl.trim()
+      : '';
 
   const tocHtml = chapters
     .map(
@@ -365,6 +369,14 @@ export function assemblePrintReadyHtml(
     @page :first {
       @bottom-center { content: none; }
     }
+    @page cover {
+      size: ${profile.pageSizeCss};
+      margin: 0;
+      @bottom-center { content: none; }
+    }
+    @page titlepage {
+      @bottom-center { content: none; }
+    }
     * { box-sizing: border-box; }
     body {
       font-family: "Noto Serif Bengali", "Noto Sans Bengali", "Kalpurush", "SolaimanLipi", Georgia, serif;
@@ -379,7 +391,26 @@ export function assemblePrintReadyHtml(
       orphans: 3;
       widows: 3;
     }
+    .cover-page {
+      page: cover;
+      width: 100%;
+      height: 100vh;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      break-after: page;
+    }
+    .cover-page img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
     .title-page {
+      page: titlepage;
       text-align: center;
       padding: 60px 14px 44px;
       break-after: page;
@@ -517,7 +548,7 @@ export function assemblePrintReadyHtml(
   </style>
 </head>
 <body>
-  <header class="title-page">
+  ${safeCoverUrl ? `<section class="cover-page" aria-label="Original Book Cover"><img src="${safeCoverUrl}" alt="${titleEn}" /></section>\n  ` : ''}<header class="title-page">
     <div class="edition-tag">প্রথম বাংলা সংস্করণ · ${yearBn}</div>
     <h1>${mainTitleBn}</h1>
     ${subTitleBn ? `<div class="title-bn-sub">${subTitleBn}</div>` : ''}
@@ -642,6 +673,47 @@ p { margin: 0 0 1em; text-align: justify; }
     `<item id="colophon" href="colophon.xhtml" media-type="application/xhtml+xml"/>`,
   ];
 
+  const spineItems: string[] = [];
+  const navLinks: string[] = [];
+
+  if (project.coverImageDataUrl && isSafeAssetDataUrl(project.coverImageDataUrl)) {
+    const coverMatch = project.coverImageDataUrl
+      .trim()
+      .match(/^data:(image\/(?:png|jpeg|jpg|webp|gif|svg\+xml));base64,(.+)$/i);
+    if (coverMatch) {
+      const coverMime = coverMatch[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : coverMatch[1].toLowerCase();
+      const fallbackExt =
+        coverMime === 'image/jpeg' ? '.jpg' : coverMime === 'image/svg+xml' ? '.svg' : `.${coverMime.split('/')[1] || 'png'}`;
+      const rawCoverName = (project.coverFileName || `cover${fallbackExt}`).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const coverFileName = rawCoverName || `cover${fallbackExt}`;
+      entries.push({
+        path: `OEBPS/assets/${coverFileName}`,
+        content: coverMatch[2].replace(/\s+/g, ''),
+        base64: true,
+      });
+      entries.push({
+        path: 'OEBPS/cover.xhtml',
+        content: `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="bn" lang="bn">
+<head>
+  <title>${titleBn}</title>
+  <style>html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; } .cover-wrap { width: 100%; height: 100%; text-align: center; } .cover-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; }</style>
+</head>
+<body>
+  <div class="cover-wrap"><img src="assets/${escapeHtml(coverFileName)}" alt="${titleBn}"/></div>
+</body>
+</html>`,
+      });
+      manifestItems.unshift(
+        `<item id="cover-image" href="assets/${escapeHtml(coverFileName)}" media-type="${coverMime}" properties="cover-image"/>`,
+        `<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>`
+      );
+      spineItems.push(`<itemref idref="cover"/>`);
+      navLinks.push(`<li><a href="cover.xhtml">মূল প্রচ্ছদ (Original Cover)</a></li>`);
+    }
+  }
+
   project.assets.forEach((asset, idx) => {
     if (!isSafeAssetDataUrl(asset.dataUrl)) return;
     const base64Body = asset.dataUrl.split(',')[1] ?? '';
@@ -656,8 +728,8 @@ p { margin: 0 0 1em; text-align: justify; }
     );
   });
 
-  const spineItems: string[] = [`<itemref idref="colophon"/>`];
-  const navLinks: string[] = [`<li><a href="colophon.xhtml">স্বত্ব ও প্রকাশনা পরিচিতি</a></li>`];
+  spineItems.push(`<itemref idref="colophon"/>`);
+  navLinks.push(`<li><a href="colophon.xhtml">স্বত্ব ও প্রকাশনা পরিচিতি</a></li>`);
 
   chapters.forEach((ch, idx) => {
     const fileId = `chapter-${idx + 1}`;

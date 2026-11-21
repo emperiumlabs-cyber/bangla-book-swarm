@@ -24,6 +24,8 @@ export interface IngestedBookPayload {
   format: BookProject['sourceFormat'];
   rawText: string;
   assets: BookAsset[];
+  coverImageDataUrl?: string;
+  coverFileName?: string;
 }
 
 interface BookStudioViewProps {
@@ -141,6 +143,10 @@ export function BookStudioView({
           format: data.format || 'txt',
           rawText: data.text,
           assets: Array.isArray(data.assets) ? data.assets : [],
+          coverImageDataUrl:
+            typeof data.coverImageDataUrl === 'string' ? data.coverImageDataUrl : undefined,
+          coverFileName:
+            typeof data.coverFileName === 'string' ? data.coverFileName : undefined,
         });
       }
 
@@ -617,6 +623,27 @@ export function BookStudioView({
               Full Book PDF Preview →
             </button>
           </div>
+
+          {project.coverImageDataUrl && (
+            <div
+              data-testid="studio-cover-preserved"
+              className="bg-white border border-slate-200 rounded-lg p-3 flex items-center gap-3.5"
+            >
+              <img
+                src={project.coverImageDataUrl}
+                alt={`Original cover of ${project.title}`}
+                className="w-16 h-22 object-contain rounded-xs border border-slate-200 bg-slate-50 shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-emerald-800">
+                  Original Page 1 Cover Preserved
+                </div>
+                <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+                  Kept untouched as Page 1 of your Bangla PDF &amp; EPUB, followed by the Bangla title page on Page 2.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="bg-white border border-slate-200 rounded-lg p-6 text-center font-bangla">
             <div className="text-xs text-slate-400 mb-3">

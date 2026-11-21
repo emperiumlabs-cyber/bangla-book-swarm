@@ -23,6 +23,7 @@ import {
   parseLatexBook,
   parseRtfBook,
   resolveEpubSpineOrder,
+  stripRedundantPdfCoverPageText,
 } from './bookFormats';
 import {
   buildAntigravityLedgerJson,
@@ -395,3 +396,45 @@ test('exporters render multi-device Phone/Tablet page geometry, proper beginning
   assert.ok(epubEntries.some((e) => e.path === 'OEBPS/chapter-1.xhtml' && e.content.includes('assets/fig-01-estuary-tide-graph.svg')));
   assert.ok(epubEntries.some((e) => e.path === 'OEBPS/endmatter.xhtml' && e.content.includes('সমাপ্ত')));
 });
+
+test('original Page 1 cover page is preserved verbatim in HTML/PDF, EPUB 3.0, ledger, and exported CLI scripts without duplicating cover text', () => {
+  // Cover-only Page 1 text is skipped when Page 1 is preserved visually
+  const stripped = stripRedundantPdfCoverPageText([
+    'NEVER SPLIT THE DIFFERENCE\nChris Voss',
+    'Chapter 1: The New Rules\n\nNegotiation starts with listening carefully to every word.',
+  ]);
+  assert.ok(!stripped.includes('Chris Voss'));
+  assert.ok(stripped.includes('Chapter 1: The New Rules'));
+
+  // Substantive Page 1 chapter prose is NOT dropped
+  const kept = stripRedundantPdfCoverPageText([
+    'Chapter 1: Opening\n\n' + Array.from({ length: 70 }, (_, i) => `word${i}`).join(' '),
+    'Page two continues the narrative cleanly.',
+  ]);
+  assert.ok(kept.includes('Chapter 1: Opening'));
+
+  const sample = createSampleBookProject();
+  const fakeCoverSvg = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="140"></svg>').toString('base64');
+  const withCover = { ...sample, coverImageDataUrl: fakeCoverSvg, coverFileName: 'cover.svg' };
+
+  const html = assemblePrintReadyHtml(withCover, 'print_a4');
+  assert.ok(html.includes('@page cover'));
+  assert.ok(html.includes('class="cover-page"'));
+  assert.ok(html.indexOf('class="cover-page"') < html.indexOf('class="title-page"'), 'Original cover must appear on Page 1 before the Bangla title page');
+
+  const epub = buildEpubFileEntries(withCover);
+  assert.ok(epub.some((e) => e.path === 'OEBPS/cover.xhtml'));
+  assert.ok(epub.some((e) => e.path === 'OEBPS/assets/cover.svg' && e.base64));
+  const opf = epub.find((e) => e.path === 'OEBPS/content.opf');
+  assert.ok(opf?.content.includes('properties="cover-image"'));
+  assert.ok(opf!.content.indexOf('<itemref idref="cover"/>') < opf!.content.indexOf('<itemref idref="colophon"/>'));
+
+  const ledger = buildAntigravityLedgerJson(withCover);
+  assert.equal(ledger.coverFileName, 'cover.svg');
+
+  const files = generateSkillRepositoryFiles(DEFAULT_PUBLISHER, SAMPLE_GLOSSARY);
+  assert.ok(files.find((f) => f.path === 'scripts/extract-book.ts')?.content.includes('-dFirstPage=1'));
+  assert.ok(files.find((f) => f.path === 'scripts/assemble-book.ts')?.content.includes('class="cover-page"'));
+  assert.ok(files.find((f) => f.path === 'templates/book.typ')?.content.includes('cover_image: none'));
+});
+

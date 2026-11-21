@@ -17,6 +17,7 @@ export interface AntigravityLedgerPayload {
   defaultLayout: BookProject['publisher']['defaultLayout'];
   maxWordsPerChunk: number;
   strictZeroEnglish: boolean;
+  coverFileName?: string;
   glossary: Array<{ english: string; bangla: string; category: string }>;
   assets: Array<{
     id: string;
@@ -65,6 +66,7 @@ export function buildAntigravityLedgerJson(project: BookProject): AntigravityLed
     defaultLayout: project.publisher.defaultLayout ?? 'phone',
     maxWordsPerChunk: project.publisher.maxWordsPerChunk,
     strictZeroEnglish: project.publisher.strictZeroEnglish,
+    ...(project.coverFileName ? { coverFileName: project.coverFileName } : {}),
     glossary: project.glossary.map((g) => ({
       english: g.english,
       bangla: g.bangla,
@@ -230,6 +232,10 @@ export function parseImportedProjectOrLedger(
       typeof obj.sourceFile === 'string' && obj.sourceFile.trim()
         ? obj.sourceFile.trim()
         : currentProject.fileName,
+    coverFileName:
+      typeof obj.coverFileName === 'string' && obj.coverFileName.trim()
+        ? obj.coverFileName.trim()
+        : currentProject.coverFileName,
     totalWords,
     updatedAt: new Date().toISOString(),
     publisher: mergedPublisher,

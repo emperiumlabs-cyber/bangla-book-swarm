@@ -151,6 +151,7 @@ The user only supplies:
 
 1. **Parallel Multi-Book Ingestion (\`scripts/batch-extract.ts\`)**:
    - Processes 1 book OR 50+ PDFs/EPUBs/DOCXs/ODTs/FB2s/RTFs/HTML/LaTeX books simultaneously across CPU cores.
+   - **Original Page 1 / Cover Page Preservation**: Automatically captures Page 1 of every PDF (and the cover image of every EPUB) verbatim into \`assets/cover.jpg\` so the finished Bangla PDF & EPUB always opens with the original cover on Page 1.
    - Repairs PDF/OCR broken line-wrap and space-wrapped hyphens automatically, locks every embedded **graph, chart, diagram, and picture** untouched behind \`[[ASSET:fig-XX]]\`, and preserves rich semantic formatting (\`#\`, \`##\`, \`###\`, \`**bold**\`, \`*italic*\`, \`==highlight==\`, \`> quotes\`, \`- lists\`, \`~small notes~\`).
 2. **Adaptive Lock-Free Multi-Sub-Agent Swarm (\`scripts/swarm-orchestrator.ts\` + \`SUBAGENT_WORKER.md\`)**:
    - Scales sub-agents dynamically (\`--workers auto\`, \`10\`, \`20\`, or \`50\`) based on book count and total micro-chunks.
@@ -161,7 +162,7 @@ The user only supplies:
    - Auto-uses optional compiled Rust + Rayon verifier (\`rust-core/\`) if \`cargo\` is installed, with zero-setup Node.js execution out of the box (no Rust compiler required!).
 4. **100% Completeness Barrier + Fastest Parallel Book Compilation (\`scripts/assemble-book.ts\` + \`scripts/build-pdf.ts\`)**:
    - Never compiles until \`scripts/swarm-orchestrator.ts verify\` confirms **100.0% passed across all books** (if any chunk remains, dispatches an automatic sweep sub-agent first).
-   - Builds every book with a **complete professional beginning** (Title Page → Copyright Colophon → \`সূচিপত্র\` Table of Contents) and **proper ending** (\`সমাপ্ত\` End Seal & Imprint) in **PDF + EPUB 3.0 + Print HTML + Typst**.
+   - Builds every book with a **complete professional beginning** (Preserved Original Page 1 Cover → Bangla Title Page → Copyright Colophon → \`সূচিপত্র\` Table of Contents) and **proper ending** (\`সমাপ্ত\` End Seal & Imprint) in **PDF + EPUB 3.0 + Print HTML + Typst**.
    - Auto-detects **Typst** (~0.4s/book, compiles 50 books in ~20 seconds!) or runs a **multi-core Chromium HarfBuzz pool** in parallel across all 50 books.
 
 ---
@@ -505,7 +506,26 @@ async function readAnyBook(inputPath: string, outDir: string, assetsDir: string)
   const assets: ExtractedAsset[] = [];
 
   if (ext === '.pdf') {
-    const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
+    const { text } = await extractText(new Uint8Array(buffer), { mergePages: false });
+    let coverFileName = '';
+    const coverOut = path.join(assetsDir, 'cover.jpg');
+    // Always preserve Page 1 (Original Cover Page) verbatim via Ghostscript, pdftoppm, or mutool
+    try {
+      execFileSync('gs', ['-dSAFER', '-dBATCH', '-dNOPAUSE', '-dFirstPage=1', '-dLastPage=1', '-sDEVICE=jpeg', '-dJPEGQ=90', '-r150', \`-sOutputFile=\${coverOut}\`, activePath], { stdio: 'ignore' });
+      if (fs.existsSync(coverOut)) coverFileName = 'cover.jpg';
+    } catch {
+      try {
+        execFileSync('pdftoppm', ['-jpeg', '-f', '1', '-l', '1', '-r', '150', '-singlefile', activePath, path.join(assetsDir, 'cover')], { stdio: 'ignore' });
+        if (fs.existsSync(coverOut)) coverFileName = 'cover.jpg';
+      } catch {
+        try {
+          execFileSync('mutool', ['draw', '-o', coverOut, '-r', '150', activePath, '1'], { stdio: 'ignore' });
+          if (fs.existsSync(coverOut)) coverFileName = 'cover.jpg';
+        } catch {
+          // Optional cover renderer unavailable
+        }
+      }
+    }
     // Best-effort lossless PDF figure extraction via poppler pdfimages if installed
     try {
       execFileSync('pdfimages', ['-png', activePath, path.join(assetsDir, 'pdf-fig')]);
@@ -517,8 +537,18 @@ async function readAnyBook(inputPath: string, outDir: string, assetsDir: string)
     } catch {
       // Optional system utility
     }
-    const rawPdf = Array.isArray(text) ? text.join('\\n\\n') : String(text);
-    return { text: cleanPdfText(rawPdf), assets };
+    const pages = Array.isArray(text) ? text.map(String) : [String(text)];
+    let finalText = cleanPdfText(pages.join('\\n\\n'));
+    if (coverFileName && pages.length > 1) {
+      const p1 = cleanPdfText(pages[0] || '');
+      const p1Words = p1 ? p1.split(/\\s+/).filter(Boolean).length : 0;
+      const p1LooksLikeChapter = /(?:^|\\n)\\s*(?:chapter|part|prologue|introduction)\\s*(?:1|one|i)\\b/i.test(p1);
+      const rest = cleanPdfText(pages.slice(1).join('\\n\\n'));
+      if (rest.length >= 20 && p1Words < 60 && !p1LooksLikeChapter) {
+        finalText = rest;
+      }
+    }
+    return { text: finalText, assets, coverFileName };
   }
 
   if (ext === '.docx') {
@@ -588,13 +618,49 @@ async function readAnyBook(inputPath: string, outDir: string, assetsDir: string)
       if (/\\.(png|jpe?g|webp|gif|svg)$/i.test(n)) mediaByBase.set(path.basename(n).toLowerCase(), n);
     }
 
+    // Preserve original EPUB cover image verbatim
+    let coverBaseKey = '';
+    let coverFileName = '';
+    if (opfPath) {
+      const opfXml = await zip.files[opfPath].async('string');
+      const idToBase = new Map<string, string>();
+      for (const m of opfXml.matchAll(/<item\\b([^>]+)\\/?>/gi)) {
+        const idM = m[1].match(/id=["']([^"']+)["']/i);
+        const hrefM = m[1].match(/href=["']([^"']+)["']/i);
+        if (!hrefM) continue;
+        const bKey = path.basename(hrefM[1].split('?')[0]).toLowerCase();
+        if (idM) idToBase.set(idM[1], bKey);
+        if (/\\bproperties=["'][^"']*\\bcover-image\\b[^"']*["']/i.test(m[1]) && mediaByBase.has(bKey)) coverBaseKey = bKey;
+      }
+      if (!coverBaseKey) {
+        const metaCover = opfXml.match(/<meta\\b[^>]*name=["']cover["'][^>]*content=["']([^"']+)["'][^>]*\\/?>/i) || opfXml.match(/<meta\\b[^>]*content=["']([^"']+)["'][^>]*name=["']cover["'][^>]*\\/?>/i);
+        if (metaCover) {
+          const mapped = idToBase.get(metaCover[1]) || path.basename(metaCover[1]).toLowerCase();
+          if (mediaByBase.has(mapped)) coverBaseKey = mapped;
+        }
+      }
+    }
+    if (!coverBaseKey) {
+      for (const key of mediaByBase.keys()) {
+        if (/^cover\\.(?:png|jpe?g|webp|gif)$/i.test(key)) { coverBaseKey = key; break; }
+      }
+    }
+    if (coverBaseKey && mediaByBase.has(coverBaseKey)) {
+      const zipKey = mediaByBase.get(coverBaseKey)!;
+      coverFileName = \`cover\${path.extname(zipKey).toLowerCase() || '.jpg'}\`;
+      const coverBuf = await zip.files[zipKey].async('nodebuffer');
+      fs.writeFileSync(path.join(assetsDir, coverFileName), coverBuf);
+    }
+
     let count = 0;
     const sections: string[] = [];
     const pendingWrites: Array<Promise<void>> = [];
     for (const entry of ordered) {
       const raw = await zip.files[entry].async('string');
       const tokenized = raw.replace(/<(?:img|image)\\b[^>]*(?:src|href)=["']([^"']+)["'][^>]*\\/?>/gi, (_m: string, src: string) => {
-        const zipKey = mediaByBase.get(path.basename(src.split('?')[0]).toLowerCase());
+        const base = path.basename(src.split('?')[0]).toLowerCase();
+        if (coverBaseKey && base === coverBaseKey) return '';
+        const zipKey = mediaByBase.get(base);
         if (!zipKey) return '';
         count += 1;
         const id = \`fig-\${String(count).padStart(2, '0')}\`;
@@ -607,7 +673,7 @@ async function readAnyBook(inputPath: string, outDir: string, assetsDir: string)
       if (structured.length > 20) sections.push(structured);
     }
     await Promise.all(pendingWrites);
-    return { text: sections.join('\\n\\n'), assets };
+    return { text: sections.join('\\n\\n'), assets, coverFileName };
   }
 
   const utf8 = buffer.toString('utf8');
@@ -641,7 +707,9 @@ async function main() {
     process.exit(1);
   }
   fs.mkdirSync(assetsDir, { recursive: true });
-  const { text, assets } = await readAnyBook(input, outDir, assetsDir);
+  const extracted = await readAnyBook(input, outDir, assetsDir);
+  const { text, assets } = extracted;
+  const coverFileName = 'coverFileName' in extracted && typeof extracted.coverFileName === 'string' ? extracted.coverFileName : '';
   const blocks = text.replace(/\\r\\n/g, '\\n').split(/\\n{2,}/).map((b) => b.trim()).filter(Boolean);
   const chunks: Array<Record<string, unknown>> = [];
   let chapterIndex = 0;
@@ -687,11 +755,12 @@ async function main() {
     register: ${registerLit},
     defaultLayout: ${defaultLayoutLit},
     maxWordsPerChunk: maxWords,
+    ...(coverFileName ? { coverFileName } : {}),
     glossary: [],
     assets,
     chunks,
   }, null, 2), 'utf8');
-  console.log(\`Extracted \${chunks.length} micro-chunks and \${assets.length} untouched visual assets into \${ledgerPath}\`);
+  console.log(\`Extracted \${chunks.length} micro-chunks, \${assets.length} untouched visual assets\${coverFileName ? \`, and preserved Page 1 cover (\${coverFileName})\` : ''} into \${ledgerPath}\`);
 }
 
 main().catch((err) => {
@@ -962,7 +1031,7 @@ function renderBlockHtml(
 async function buildEpub3(
   outDir: string,
   assetsRoot: string,
-  meta: { titleBn: string; titleEn: string; authorBn: string; houseBn: string; city: string; rights: string; yearBn: string },
+  meta: { titleBn: string; titleEn: string; authorBn: string; houseBn: string; city: string; rights: string; yearBn: string; coverFileName?: string },
   chapters: Array<[number, { titleBn: string; chunks: any[] }]>,
   assetByToken: Map<string, { id: string; fileName: string; captionBangla?: string; captionEnglish?: string }>
 ) {
@@ -992,7 +1061,28 @@ p { text-align: justify; margin: 0 0 1em; }
     '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
     '<item id="titlepage" href="titlepage.xhtml" media-type="application/xhtml+xml"/>',
   ];
-  const spineItems: string[] = ['<itemref idref="titlepage"/>'];
+  const spineItems: string[] = [];
+
+  if (meta.coverFileName) {
+    const safeCover = path.basename(meta.coverFileName);
+    const absCover = path.resolve(assetsRoot, safeCover);
+    if (absCover.startsWith(path.resolve(assetsRoot) + path.sep) && fs.existsSync(absCover)) {
+      zip.file(\`OEBPS/images/\${safeCover}\`, fs.readFileSync(absCover));
+      zip.file(
+        'OEBPS/cover.xhtml',
+        \`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="bn"><head><title>\${esc(meta.titleBn)}</title><style>html,body{margin:0;padding:0;height:100%;background:#fff;}div{width:100%;height:100%;text-align:center;}img{max-width:100%;max-height:100%;object-fit:contain;}</style></head>
+<body><div><img src="images/\${esc(safeCover)}" alt="\${esc(meta.titleBn)}"/></div></body></html>\`
+      );
+      manifestItems.unshift(
+        \`<item id="cover-image" href="images/\${esc(safeCover)}" media-type="\${guessMime(safeCover)}" properties="cover-image"/>\`,
+        '<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>'
+      );
+      spineItems.push('<itemref idref="cover"/>');
+    }
+  }
+  spineItems.push('<itemref idref="titlepage"/>');
 
   for (const asset of assetByToken.values()) {
     const absImg = path.join(assetsRoot, asset.fileName);
@@ -1138,15 +1228,38 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
     })
     .join('\\n  ');
 
+  // Resolve preserved Original Page 1 Cover image if present in assetsRoot
+  let resolvedCoverFile = '';
+  const coverCandidates = [
+    typeof ledger.coverFileName === 'string' ? path.basename(ledger.coverFileName) : '',
+    'cover.jpg',
+    'cover.png',
+    'cover.jpeg',
+    'cover.webp',
+  ].filter(Boolean);
+  const absAssetsRoot = path.resolve(assetsRoot);
+  for (const cand of coverCandidates) {
+    const full = path.resolve(absAssetsRoot, cand);
+    if (full.startsWith(absAssetsRoot + path.sep) && fs.existsSync(full)) {
+      resolvedCoverFile = cand;
+      break;
+    }
+  }
+  const relCoverImg = resolvedCoverFile ? toPosix(path.relative(outDir, path.join(assetsRoot, resolvedCoverFile))) : '';
+
   const html = \`<!doctype html>
 <html lang="bn"><head><meta charset="utf-8" /><title>\${titleBn} · \${houseBn} (\${p.label})</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Bengali:wght@400;600;700&display=swap" rel="stylesheet" />
 <style>
   @page { size: \${p.size}; margin: \${p.margin}; @bottom-center { content: counter(page, bengali); font-family: "Noto Serif Bengali", "Noto Sans Bengali", serif; font-size: 9pt; color: #64748b; } }
   @page :first { @bottom-center { content: none; } }
+  @page cover { size: \${p.size}; margin: 0; @bottom-center { content: none; } }
+  @page titlepage { @bottom-center { content: none; } }
   * { box-sizing: border-box; }
   body { font-family: "Noto Serif Bengali", "Noto Sans Bengali", "Kalpurush", "SolaimanLipi", Georgia, serif; font-size: \${p.fontPx}px; line-height: \${p.lh}; max-width: \${p.maxCh}; margin: 0 auto; color: #0f172a; orphans: 3; widows: 3; text-rendering: optimizeLegibility; }
-  .title-page { text-align: center; padding: 60px 14px 44px; break-after: page; }
+  .cover-page { page: cover; width: 100%; height: 100vh; margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; background: #ffffff; break-after: page; }
+  .cover-page img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .title-page { page: titlepage; text-align: center; padding: 60px 14px 44px; break-after: page; }
   .title-page h1 { font-size: \${mainTitleEm}em; max-width: 92%; margin: 0 auto 12px; line-height: 1.44; font-weight: 700; text-wrap: balance; overflow-wrap: break-word; }
   .title-page .title-bn-sub { font-size: 1.04em; font-weight: 500; color: #334155; max-width: 88%; margin: 0 auto 18px; line-height: 1.62; text-wrap: balance; }
   .title-page .subtitle-en { font-size: 0.82em; color: #64748b; max-width: 86%; margin: 0 auto 24px; line-height: 1.55; text-wrap: balance; }
@@ -1176,7 +1289,7 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
   p { margin: 0 0 1.05em; text-align: justify; hyphens: none; overflow-wrap: break-word; }
   @media print { body { max-width: none; padding: 0; } }
 </style></head><body>
-  <header class="title-page"><div style="font-size:0.8em;color:#64748b;margin-bottom:18px;">প্রথম বাংলা সংস্করণ · \${yearBn}</div><h1>\${mainTitleBn}</h1>\${subTitleBn ? \`<div class="title-bn-sub">\${subTitleBn}</div>\` : ''}<div class="subtitle-en">মূল গ্রন্থ: \${titleEn}</div><p style="text-align:center;margin-top:20px;font-size:1.12em;"><strong>\${authorBn}</strong></p><div class="rule"></div><p style="text-align:center;margin:0;text-wrap:balance;"><strong>\${houseBn}</strong></p><p style="text-align:center;font-size:0.84em;color:#475569;">\${city}</p></header>
+  \${relCoverImg ? \`<section class="cover-page" aria-label="Original Book Cover"><img src="\${esc(relCoverImg)}" alt="\${titleEn}" /></section>\\n  \` : ''}<header class="title-page"><div style="font-size:0.8em;color:#64748b;margin-bottom:18px;">প্রথম বাংলা সংস্করণ · \${yearBn}</div><h1>\${mainTitleBn}</h1>\${subTitleBn ? \`<div class="title-bn-sub">\${subTitleBn}</div>\` : ''}<div class="subtitle-en">মূল গ্রন্থ: \${titleEn}</div><p style="text-align:center;margin-top:20px;font-size:1.12em;"><strong>\${authorBn}</strong></p><div class="rule"></div><p style="text-align:center;margin:0;text-wrap:balance;"><strong>\${houseBn}</strong></p><p style="text-align:center;font-size:0.84em;color:#475569;">\${city}</p></header>
   <section class="colophon"><h2>প্রকাশনা ও স্বত্ব পরিচিতি</h2><p style="text-align:left;"><strong>গ্রন্থের নাম:</strong> \${titleBn}</p><p style="text-align:left;"><strong>মূল গ্রন্থ:</strong> \${titleEn}</p><p style="text-align:left;"><strong>প্রকাশক:</strong> \${houseBn} · \${city} · \${yearBn}</p><p style="text-align:left;margin-top:12px;font-weight:600;">\${rights}</p></section>
   <nav class="toc"><h2>সূচিপত্র</h2><ol>\${tocHtml}</ol></nav>
   <main>\${chaptersHtml}</main>
@@ -1220,6 +1333,7 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
   city: \${JSON.stringify(cityRaw)},
   rights: \${JSON.stringify(rightsRaw)},
   profile: \${JSON.stringify(profileArg)},
+  cover_image: \${relCoverImg ? JSON.stringify(relCoverImg) : 'none'},
 )
 
 \${typChapters}
@@ -1231,12 +1345,12 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
   const outEpub = await buildEpub3(
     outDir,
     assetsRoot,
-    { titleBn: titleBnRaw, titleEn: titleEnRaw, authorBn: authorBnRaw, houseBn: houseBnRaw, city: cityRaw, rights: rightsRaw, yearBn },
+    { titleBn: titleBnRaw, titleEn: titleEnRaw, authorBn: authorBnRaw, houseBn: houseBnRaw, city: cityRaw, rights: rightsRaw, yearBn, coverFileName: resolvedCoverFile || undefined },
     chapters,
     assetByToken
   );
 
-  console.log(\`Assembled Bangla book (Title + সূচিপত্র + Body + সমাপ্ত): \${outHtml} | \${outTyp} | \${outEpub}\`);
+  console.log(\`Assembled Bangla book (\${resolvedCoverFile ? 'Original Cover + ' : ''}Title + সূচিপত্র + Body + সমাপ্ত): \${outHtml} | \${outTyp} | \${outEpub}\`);
 }
 
 async function main() {
@@ -1632,7 +1746,7 @@ Always preserve visual hierarchy so every phone, tablet, print, and PC page feel
 - **Unlimited Multi-Book Parallel Batch**: Ingest, translate, verify, and compile **1 book or 50+ books simultaneously** in one shot.
 - **Zero Dev Friction (Fast Out of the Box)**: Runs immediately on Node.js 18+. Optionally auto-accelerates with **Typst** (~0.4s/book PDF) and **Rust + Rayon** (\`rust-core/\`) if installed—never required.
 - **Strict 6-Check Quality Gate**: Rejects untranslated English leaks, literal word-for-word idiom calques, dropped factual numbers, **all AI symbols/dashes** (\`—\`, \`–\`, \`―\`, \`--\`, \` - \`, emojis, arrows, chatbot preambles), dropped \`[[ASSET:...]]\` figures, or flattened headings/highlights/quotes.
-- **Complete Professional Book Structure**: Half-Title/Title Page → Copyright & Rights Colophon (**${houseBn}**) → Bangla Table of Contents (\`সূচিপত্র\`) → Richly Formatted Chapters → Back-Matter End Seal (\`সমাপ্ত\`).
+- **Complete Professional Book Structure**: Preserved Original Page 1 Cover → Bangla Title Page → Copyright & Rights Colophon (**${houseBn}**) → Bangla Table of Contents (\`সূচিপত্র\`) → Highlighted Chapter Headers & Richly Formatted Body → Back-Matter End Seal (\`সমাপ্ত\`).
 
 ---
 

@@ -18,6 +18,7 @@ import {
   LAYOUT_PROFILES,
   getAdaptiveTitleScaleEm,
   groupChunksByChapter,
+  isSafeAssetDataUrl,
   splitBookTitle,
   stripLeadingChapterPrefix,
   toBengaliDigits,
@@ -244,7 +245,7 @@ export function PdfPreviewModal({
                 Production Bangla Book — {spec.label} Preview
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                {spec.description} · {project.assets.length} untouched figure{project.assets.length === 1 ? '' : 's'} locked inline.
+                {spec.description} · {project.coverImageDataUrl && isSafeAssetDataUrl(project.coverImageDataUrl) ? 'Original Page 1 cover preserved · ' : ''}{project.assets.length} untouched figure{project.assets.length === 1 ? '' : 's'} locked inline.
               </p>
             </div>
             <button
@@ -349,6 +350,24 @@ export function PdfPreviewModal({
             }}
             className="mx-auto bg-white border border-slate-200 px-6 py-9 sm:px-10 sm:py-12 font-bangla text-slate-900 shadow-2xs transition-all duration-200 print:max-w-none print:border-0 print:shadow-none print:px-0 print:py-0"
           >
+            {/* Preserved Original Page 1 Cover */}
+            {project.coverImageDataUrl && isSafeAssetDataUrl(project.coverImageDataUrl) && (
+              <section
+                data-testid="preserved-cover-page"
+                aria-label="Original Book Cover (Page 1)"
+                className="mb-10 pb-10 border-b border-slate-200 flex flex-col items-center break-after-page"
+              >
+                <div className="text-[11px] font-sans uppercase tracking-wider text-slate-400 mb-3 print:hidden">
+                  Page 1 · Original Book Cover Preserved Verbatim
+                </div>
+                <img
+                  src={project.coverImageDataUrl}
+                  alt={`Original cover of ${project.title}`}
+                  className="w-full max-h-[680px] object-contain border border-slate-100 rounded-xs print:border-0 print:max-h-[98vh]"
+                />
+              </section>
+            )}
+
             {/* Title Page */}
             <header className="text-center px-3 pb-10 mb-10 border-b border-slate-200 break-after-page">
               <div className="text-[0.8em] text-slate-500 mb-5">

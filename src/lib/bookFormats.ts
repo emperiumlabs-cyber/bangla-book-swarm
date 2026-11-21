@@ -85,6 +85,28 @@ export function cleanExtractedPdfText(raw: string): string {
     .trim();
 }
 
+/**
+ * When a multi-page PDF's Page 1 is preserved verbatim as the visual cover page,
+ * skip short cover-only title/author blurbs on Page 1 so they do not pollute Chapter 1 prose.
+ * If Page 1 already starts real body prose (>= 60 words or contains an explicit Chapter 1 body),
+ * keep all pages intact.
+ */
+export function stripRedundantPdfCoverPageText(pages: string[]): string {
+  if (pages.length <= 1) {
+    return cleanExtractedPdfText(pages.join('\n\n'));
+  }
+  const firstPage = cleanExtractedPdfText(pages[0] ?? '');
+  const firstWords = firstPage ? firstPage.split(/\s+/).filter(Boolean).length : 0;
+  const looksLikeChapterStart = /(?:^|\n)\s*(?:chapter|part|prologue|introduction)\s*(?:1|one|i)\b/i.test(
+    firstPage
+  );
+  const restText = cleanExtractedPdfText(pages.slice(1).join('\n\n'));
+  if (restText.length >= 20 && firstWords < 60 && !looksLikeChapterStart) {
+    return restText;
+  }
+  return cleanExtractedPdfText(pages.join('\n\n'));
+}
+
 export function htmlToStructuredText(html: string): string {
   return decodeHtmlEntities(
     html
@@ -337,7 +359,7 @@ export function resolveEpubSpineOrder(
  */
 export async function parseEpubBuffer(
   buffer: Buffer
-): Promise<{ text: string; assets: BookAsset[] }> {
+): Promise<{ text: string; assets: BookAsset[]; coverImageDataUrl?: string; coverFileName?: string }> {
   const zip = await JSZip.loadAsync(buffer);
   const entryNames = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
 
@@ -364,7 +386,7 @@ export async function parseEpubBuffer(
   const orderedHtmlEntries = resolveEpubSpineOrder(entryNames, opfXml, opfDir);
 
   // Build image lookup map across all EPUB media folders
-  const imageMap = new Map<string, { mimeType: string; dataUrl: string; fileName: string }>();
+  const imageMap = new Map<string, { mimeType: string; dataUrl: string; fileName: string; zipPath: string }>();
   for (const name of entryNames) {
     const imgExt = path.extname(name).toLowerCase();
     const mimeType = MIME_BY_EXT[imgExt];
@@ -376,8 +398,49 @@ export async function parseEpubBuffer(
       mimeType,
       dataUrl: `data:${mimeType};base64,${b64}`,
       fileName: baseName,
+      zipPath: name,
     });
   }
+
+  // Detect original EPUB Cover Image (EPUB 3 properties="cover-image", EPUB 2 <meta name="cover">, or cover.* file)
+  let coverBaseKey: string | null = null;
+  if (opfXml) {
+    const itemIdToBase = new Map<string, string>();
+    for (const m of opfXml.matchAll(/<item\b([^>]+)\/?>/gi)) {
+      const attrs = m[1];
+      const idM = attrs.match(/id=["']([^"']+)["']/i);
+      const hrefM = attrs.match(/href=["']([^"']+)["']/i);
+      if (!hrefM) continue;
+      const baseKey = path.basename(hrefM[1].split('?')[0]).toLowerCase();
+      if (idM) itemIdToBase.set(idM[1], baseKey);
+      if (/\bproperties=["'][^"']*\bcover-image\b[^"']*["']/i.test(attrs) && imageMap.has(baseKey)) {
+        coverBaseKey = baseKey;
+      }
+    }
+    if (!coverBaseKey) {
+      const metaCover =
+        opfXml.match(/<meta\b[^>]*name=["']cover["'][^>]*content=["']([^"']+)["'][^>]*\/?>/i) ??
+        opfXml.match(/<meta\b[^>]*content=["']([^"']+)["'][^>]*name=["']cover["'][^>]*\/?>/i);
+      if (metaCover) {
+        const mapped = itemIdToBase.get(metaCover[1]) ?? path.basename(metaCover[1]).toLowerCase();
+        if (imageMap.has(mapped)) coverBaseKey = mapped;
+      }
+    }
+  }
+  if (!coverBaseKey) {
+    for (const key of imageMap.keys()) {
+      if (/^cover\.(?:png|jpe?g|webp|gif)$/i.test(key)) {
+        coverBaseKey = key;
+        break;
+      }
+    }
+  }
+
+  const coverEntry = coverBaseKey ? imageMap.get(coverBaseKey) : undefined;
+  const coverImageDataUrl = coverEntry?.dataUrl;
+  const coverFileName = coverEntry
+    ? `cover${path.extname(coverEntry.fileName).toLowerCase() || '.jpg'}`
+    : undefined;
 
   const assets: BookAsset[] = [];
   const sections: string[] = [];
@@ -397,6 +460,8 @@ export async function parseEpubBuffer(
       /<(?:img|image)\b[^>]*(?:src|href)=["']([^"']+)["'][^>]*\/?>/gi,
       (_match, src: string) => {
         const base = path.basename(src.split('?')[0]).toLowerCase();
+        // Do not duplicate the preserved cover page image as an inline chapter figure
+        if (coverBaseKey && base === coverBaseKey) return '';
         const found = imageMap.get(base);
         if (!found || assets.length >= MAX_ASSETS) return '';
         imgCounter += 1;
@@ -422,7 +487,7 @@ export async function parseEpubBuffer(
     }
   }
 
-  return { text: sections.join('\n\n'), assets };
+  return { text: sections.join('\n\n'), assets, coverImageDataUrl, coverFileName };
 }
 
 /**

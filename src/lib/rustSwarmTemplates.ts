@@ -918,6 +918,7 @@ export function generateTypstBookTemplate(houseBn: string, city: string, rights:
   city: ${cityLit},
   rights: ${rightsLit},
   profile: "phone",
+  cover_image: none,
   body,
 ) = {
   let dims = if profile == "tablet" {
@@ -961,27 +962,37 @@ export function generateTypstBookTemplate(houseBn: string, city: string, rights:
     ]
   }
 
-  // 1. Proper Beginning: Title Page (Adaptive Long-Title & Subtitle Balance)
-  align(center + horizon)[
-    #block(width: 90%)[
-      #text(size: main_size, weight: "bold")[#main_title_bn]
-      #if sub_title_bn != "" [
-        #v(0.45em)
-        #text(size: 1.04em, weight: "medium", fill: luma(60))[#sub_title_bn]
+  // 0. Preserved Original Page 1 Cover (Full-bleed, zero page number)
+  if cover_image != none {
+    page(width: dims.w, height: dims.h, margin: 0pt, footer: none)[
+      #align(center + horizon)[
+        #image(cover_image, width: 100%, height: 100%, fit: "contain")
       ]
-      #v(0.65em)
-      #text(size: 0.84em, fill: luma(95))[মূল গ্রন্থ: #title_en]
     ]
-    #v(1.6em)
-    #text(size: 1.15em, weight: "semibold")[#author_bn]
-    #v(2.4em)
-    #line(length: 45%, stroke: 0.5pt + luma(180))
-    #v(1.2em)
-    #text(size: 1.05em, weight: "bold")[#publisher_bn]
-    #v(0.25em)
-    #text(size: 0.85em, fill: luma(90))[#city]
+  }
+
+  // 1. Proper Beginning: Title Page (Adaptive Long-Title & Subtitle Balance)
+  page(width: dims.w, height: dims.h, margin: dims.m, footer: none)[
+    #align(center + horizon)[
+      #block(width: 90%)[
+        #text(size: main_size, weight: "bold")[#main_title_bn]
+        #if sub_title_bn != "" [
+          #v(0.45em)
+          #text(size: 1.04em, weight: "medium", fill: luma(60))[#sub_title_bn]
+        ]
+        #v(0.65em)
+        #text(size: 0.84em, fill: luma(95))[মূল গ্রন্থ: #title_en]
+      ]
+      #v(1.6em)
+      #text(size: 1.15em, weight: "semibold")[#author_bn]
+      #v(2.4em)
+      #line(length: 45%, stroke: 0.5pt + luma(180))
+      #v(1.2em)
+      #text(size: 1.05em, weight: "bold")[#publisher_bn]
+      #v(0.25em)
+      #text(size: 0.85em, fill: luma(90))[#city]
+    ]
   ]
-  pagebreak()
 
   // 2. Copyright & Translation Rights Colophon
   align(bottom)[

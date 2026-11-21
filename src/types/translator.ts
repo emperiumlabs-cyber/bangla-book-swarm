@@ -98,6 +98,8 @@ export interface BookProject {
   publisher: PublisherConfig;
   glossary: GlossaryTerm[];
   assets: BookAsset[];
+  coverImageDataUrl?: string;
+  coverFileName?: string;
   chunks: TranslationChunk[];
 }
 

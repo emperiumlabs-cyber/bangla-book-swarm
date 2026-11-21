@@ -135,6 +135,8 @@ export default function App() {
         publisher: current.publisher,
         glossary: current.glossary,
         assets: payload.assets,
+        coverImageDataUrl: payload.coverImageDataUrl,
+        coverFileName: payload.coverFileName,
         chunks,
       };
     });

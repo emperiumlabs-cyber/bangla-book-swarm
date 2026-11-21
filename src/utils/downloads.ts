@@ -146,6 +146,17 @@ export async function downloadAntigravityWorkspaceZip(
     const ledgerPath = `workspace/books/${slug}/ledger.json`;
     folder.file(ledgerPath, JSON.stringify(ledgerObj, null, 2));
 
+    if (proj.coverImageDataUrl) {
+      const coverMatch = proj.coverImageDataUrl.match(/^data:[^;]+;base64,(.+)$/);
+      if (coverMatch) {
+        folder.file(
+          `workspace/books/${slug}/assets/${proj.coverFileName || 'cover.jpg'}`,
+          coverMatch[1],
+          { base64: true }
+        );
+      }
+    }
+
     for (const asset of proj.assets) {
       const match = asset.dataUrl.match(/^data:[^;]+;base64,(.+)$/);
       if (match) {
@@ -174,6 +185,14 @@ export async function downloadAntigravityWorkspaceZip(
     'workspace/ledger.json',
     JSON.stringify(buildAntigravityLedgerJson(primary), null, 2)
   );
+  if (primary.coverImageDataUrl) {
+    const coverMatch = primary.coverImageDataUrl.match(/^data:[^;]+;base64,(.+)$/);
+    if (coverMatch) {
+      folder.file(`workspace/assets/${primary.coverFileName || 'cover.jpg'}`, coverMatch[1], {
+        base64: true,
+      });
+    }
+  }
   for (const asset of primary.assets) {
     const match = asset.dataUrl.match(/^data:[^;]+;base64,(.+)$/);
     if (match) {

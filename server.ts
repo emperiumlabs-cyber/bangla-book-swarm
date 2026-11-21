@@ -50,6 +50,7 @@ import {
   parseLatexBook,
   parseOdtBuffer,
   parseRtfBook,
+  stripRedundantPdfCoverPageText,
 } from './src/lib/bookFormats.ts';
 import type { SupportedBookFormat } from './src/lib/bookFormats.ts';
 import type { BookAsset } from './src/types/translator.ts';
@@ -64,6 +65,66 @@ const upload = multer({
   },
 });
 
+async function renderPdfFirstPageCover(
+  pdfBuffer: Buffer
+): Promise<{ coverImageDataUrl?: string; coverFileName?: string }> {
+  let tmpDir = '';
+  try {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lipiforge-cover-'));
+    const pdfPath = path.join(tmpDir, 'source.pdf');
+    const jpgPath = path.join(tmpDir, 'cover.jpg');
+    fs.writeFileSync(pdfPath, pdfBuffer);
+
+    let rendered = false;
+    try {
+      await execFileAsync(
+        'gs',
+        [
+          '-dSAFER',
+          '-dBATCH',
+          '-dNOPAUSE',
+          '-dFirstPage=1',
+          '-dLastPage=1',
+          '-sDEVICE=jpeg',
+          '-dJPEGQ=90',
+          '-r150',
+          `-sOutputFile=${jpgPath}`,
+          pdfPath,
+        ],
+        { timeout: 15000, maxBuffer: 16 * 1024 * 1024 }
+      );
+      rendered = fs.existsSync(jpgPath);
+    } catch {
+      // Fallback to poppler pdftoppm if Ghostscript is unavailable
+      try {
+        const prefix = path.join(tmpDir, 'cover');
+        await execFileAsync(
+          'pdftoppm',
+          ['-jpeg', '-f', '1', '-l', '1', '-r', '150', '-singlefile', pdfPath, prefix],
+          { timeout: 15000, maxBuffer: 16 * 1024 * 1024 }
+        );
+        rendered = fs.existsSync(jpgPath);
+      } catch {
+        rendered = false;
+      }
+    }
+
+    if (!rendered) return {};
+    const imgBytes = fs.readFileSync(jpgPath);
+    if (imgBytes.length === 0 || imgBytes.length > 4 * 1024 * 1024) return {};
+    return {
+      coverImageDataUrl: `data:image/jpeg;base64,${imgBytes.toString('base64')}`,
+      coverFileName: 'cover.jpg',
+    };
+  } catch {
+    return {};
+  } finally {
+    if (tmpDir) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+}
+
 async function extractTextFromUploadedBook(
   buffer: Buffer,
   originalName: string
@@ -71,6 +132,8 @@ async function extractTextFromUploadedBook(
   text: string;
   format: SupportedBookFormat;
   assets: BookAsset[];
+  coverImageDataUrl?: string;
+  coverFileName?: string;
 }> {
   const ext = path.extname(originalName).toLowerCase();
 
@@ -87,9 +150,21 @@ async function extractTextFromUploadedBook(
   }
 
   if (ext === '.pdf') {
-    const result = await extractText(new Uint8Array(buffer), { mergePages: true });
-    const rawText = Array.isArray(result.text) ? result.text.join('\n\n') : String(result.text ?? '');
-    return { text: cleanExtractedPdfText(rawText), format: 'pdf', assets: [] };
+    const [result, cover] = await Promise.all([
+      extractText(new Uint8Array(buffer), { mergePages: false }),
+      renderPdfFirstPageCover(buffer),
+    ]);
+    const pages = Array.isArray(result.text) ? result.text.map(String) : [String(result.text ?? '')];
+    const text = cover.coverImageDataUrl
+      ? stripRedundantPdfCoverPageText(pages)
+      : cleanExtractedPdfText(pages.join('\n\n'));
+    return {
+      text,
+      format: 'pdf',
+      assets: [],
+      coverImageDataUrl: cover.coverImageDataUrl,
+      coverFileName: cover.coverFileName,
+    };
   }
 
   if (ext === '.docx') {
@@ -123,7 +198,13 @@ async function extractTextFromUploadedBook(
 
   if (ext === '.epub') {
     const parsed = await parseEpubBuffer(buffer);
-    return { text: parsed.text, format: 'epub', assets: parsed.assets };
+    return {
+      text: parsed.text,
+      format: 'epub',
+      assets: parsed.assets,
+      coverImageDataUrl: parsed.coverImageDataUrl,
+      coverFileName: parsed.coverFileName,
+    };
   }
 
   if (ext === '.odt') {
@@ -217,7 +298,7 @@ function mapGeminiError(err: unknown): { status: number; message: string } {
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '8mb' }));
+  app.use(express.json({ limit: '16mb' }));
 
   // Health check
   app.get('/api/health', (_req: Request, res: Response) => {
@@ -290,8 +371,8 @@ async function startServer() {
           res.status(400).json({ error: 'Print HTML content is required.' });
           return;
         }
-        if (html.length > 6 * 1024 * 1024) {
-          res.status(400).json({ error: 'Book HTML exceeds 6 MB render limit.' });
+        if (html.length > 14 * 1024 * 1024) {
+          res.status(400).json({ error: 'Book HTML exceeds 14 MB render limit.' });
           return;
         }
 
@@ -366,6 +447,8 @@ async function startServer() {
         format: extracted.format,
         text: extracted.text,
         assets: extracted.assets,
+        coverImageDataUrl: extracted.coverImageDataUrl,
+        coverFileName: extracted.coverFileName,
         charCount: extracted.text.length,
       });
     } catch (err) {
