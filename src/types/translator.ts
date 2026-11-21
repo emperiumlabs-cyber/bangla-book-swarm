@@ -2,7 +2,7 @@ export type EditorialRegister = 'literary' | 'modern' | 'academic';
 
 export type ModelTierProfile = 'weak_local' | 'balanced_flash' | 'high_context';
 
-export type DeviceLayoutProfile = 'phone' | 'tablet' | 'print_a5' | 'desktop';
+export type DeviceLayoutProfile = 'phone' | 'tablet' | 'print_a5' | 'print_a4' | 'desktop';
 
 export type SwarmConcurrencyMode = 'auto' | '10' | '20' | '50';
 

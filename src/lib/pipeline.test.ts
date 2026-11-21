@@ -12,6 +12,8 @@ import {
   assembleBanglaMarkdown,
   assemblePrintReadyHtml,
   buildEpubFileEntries,
+  getAdaptiveTitleScaleEm,
+  splitBookTitle,
   toBengaliDigits,
 } from './exporters';
 import {
@@ -372,6 +374,20 @@ test('exporters render multi-device Phone/Tablet page geometry, proper beginning
 
   const tabletHtml = assemblePrintReadyHtml(sample, 'tablet');
   assert.ok(tabletHtml.includes('size: 152mm 218mm'));
+
+  const a4Html = assemblePrintReadyHtml(sample, 'print_a4');
+  assert.ok(a4Html.includes('size: A4'));
+  assert.ok(a4Html.includes('class="chapter-header"'));
+  assert.ok(a4Html.includes('class="chapter-kicker"'));
+
+  const longTitle = 'নেভার স্প্লিট দ্য ডিফারেন্স: জীবন-মরণ পরিস্থিতিতে আপস না করে দরকষাকষির মোক্ষম কৌশল';
+  const split = splitBookTitle(longTitle);
+  assert.equal(split.mainTitle, 'নেভার স্প্লিট দ্য ডিফারেন্স');
+  assert.ok(split.subtitle.includes('জীবন\u2011মরণ'), 'Compound Bengali hyphen must become non-breaking inside headings');
+  assert.ok(getAdaptiveTitleScaleEm(split.mainTitle) < 1.92, 'Longer main titles should scale gracefully');
+
+  const longBookHtml = assemblePrintReadyHtml({ ...sample, titleBangla: longTitle }, 'print_a4');
+  assert.ok(longBookHtml.includes('class="title-bn-sub"'));
 
   const epubEntries = buildEpubFileEntries(sample);
   assert.ok(epubEntries.some((e) => e.path === 'mimetype' && e.content === 'application/epub+zip'));

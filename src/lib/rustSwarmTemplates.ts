@@ -907,7 +907,7 @@ export function generateTypstBookTemplate(houseBn: string, city: string, rights:
   const cityLit = JSON.stringify(city);
   const rightsLit = JSON.stringify(rights);
   return `// Native Rust Typst Template — Compiles a 400-page HarfBuzz Bangla Book PDF in ~0.4 seconds
-// Supports Phone (108mm x 192mm), Tablet (152mm x 218mm), Print A5 (148mm x 210mm), and Desktop (190mm x 260mm)
+// Supports Phone (108mm x 192mm), Tablet (152mm x 218mm), Print A5 (148mm x 210mm), Print A4 (210mm x 297mm), and Desktop (190mm x 260mm)
 // with proper professional beginning (Title Page, Colophon, সূচিপত্র TOC) and ending (সমাপ্ত Back-Matter).
 
 #let bangla_book(
@@ -924,11 +924,19 @@ export function generateTypstBookTemplate(houseBn: string, city: string, rights:
     (w: 152mm, h: 218mm, m: (x: 14mm, y: 16mm), size: 11.5pt)
   } else if profile == "print_a5" {
     (w: 148mm, h: 210mm, m: (x: 16mm, y: 20mm), size: 11pt)
+  } else if profile == "print_a4" {
+    (w: 210mm, h: 297mm, m: (x: 22mm, y: 24mm), size: 12pt)
   } else if profile == "desktop" {
     (w: 190mm, h: 260mm, m: (x: 22mm, y: 22mm), size: 12pt)
   } else {
     (w: 108mm, h: 192mm, m: (x: 8.5mm, y: 11mm), size: 10.5pt)
   }
+
+  let title_parts = title_bn.split(":")
+  let main_title_bn = title_parts.at(0).trim()
+  let sub_title_bn = if title_parts.len() > 1 { title_parts.slice(1).join(":").trim() } else { "" }
+  let main_len = main_title_bn.clusters().len()
+  let main_size = if main_len <= 24 { 1.88em } else if main_len <= 40 { 1.58em } else { 1.36em }
 
   set page(
     width: dims.w,
@@ -939,14 +947,34 @@ export function generateTypstBookTemplate(houseBn: string, city: string, rights:
   set text(font: ("Noto Serif Bengali", "Kalpurush", "SolaimanLipi"), size: dims.size, lang: "bn")
   set par(justify: true, leading: 0.92em, spacing: 1.15em)
 
-  // 1. Proper Beginning: Title Page
+  show heading.where(level: 1): it => {
+    v(0.4em)
+    block(
+      width: 100%,
+      inset: (x: 10pt, y: 8pt),
+      fill: rgb("#eff6ff"),
+      stroke: (left: 3pt + rgb("#1d4ed8"), rest: 0.6pt + rgb("#bfdbfe")),
+      radius: 3pt,
+      below: 1.1em,
+    )[
+      #text(size: 1.55em, weight: "bold", fill: rgb("#0f172a"))[#it.body]
+    ]
+  }
+
+  // 1. Proper Beginning: Title Page (Adaptive Long-Title & Subtitle Balance)
   align(center + horizon)[
-    #text(size: 1.85em, weight: "bold")[#title_bn]
-    #v(0.5em)
-    #text(size: 0.85em, fill: luma(90))[মূল গ্রন্থ: #title_en]
+    #block(width: 90%)[
+      #text(size: main_size, weight: "bold")[#main_title_bn]
+      #if sub_title_bn != "" [
+        #v(0.45em)
+        #text(size: 1.04em, weight: "medium", fill: luma(60))[#sub_title_bn]
+      ]
+      #v(0.65em)
+      #text(size: 0.84em, fill: luma(95))[মূল গ্রন্থ: #title_en]
+    ]
     #v(1.6em)
     #text(size: 1.15em, weight: "semibold")[#author_bn]
-    #v(2.6em)
+    #v(2.4em)
     #line(length: 45%, stroke: 0.5pt + luma(180))
     #v(1.2em)
     #text(size: 1.05em, weight: "bold")[#publisher_bn]

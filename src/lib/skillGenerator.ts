@@ -143,7 +143,7 @@ metadata:
 The user only supplies:
 1. **1 English book OR a folder of 50+ books** (\`.pdf\`, \`.epub\`, \`.docx\`, \`.odt\`, \`.fb2\`, \`.rtf\`, \`.html\`, \`.xhtml\`, \`.tex\`, \`.md\`, \`.txt\`, or \`.mobi\`/\`.azw3\`/\`.djvu\`).
 2. The **Publishing House / Translation Rights Holder** name (configured default: **${houseBn}** / ${houseEn}).
-3. Optional target device layout: \`phone\` (6" portrait, default), \`tablet\`, \`print_a5\`, or \`desktop\`.
+3. Optional target device layout: \`phone\` (6" portrait, default), \`tablet\`, \`print_a5\`, \`print_a4\`, or \`desktop\`.
 
 ---
 
@@ -869,12 +869,28 @@ import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const stripChPrefix = (t: string) => t.replace(/^(?:অধ্যায়|অধ্যায়|Chapter)\\s*[০-৯0-9]+\\s*[:.\\-–—]?\\s*/i, '').trim() || t.trim();
+const protectBnHyphens = (t: string) => t.replace(/([\\u0980-\\u09FF])-([\\u0980-\\u09FF])/g, '$1\\u2011$2');
+const stripChPrefix = (t: string) => protectBnHyphens(t.replace(/^(?:অধ্যায়|অধ্যায়|Chapter)\\s*[০-৯0-9]+\\s*[:.\\-–—]?\\s*/i, '').trim() || t.trim());
+const splitBookTitle = (raw: string) => {
+  const cleaned = protectBnHyphens(raw.trim());
+  const sep = cleaned.search(/\\s*[:：|]\\s*/);
+  if (sep > 0) {
+    const mainTitle = cleaned.slice(0, sep).trim();
+    const subtitle = cleaned.slice(sep).replace(/^\\s*[:：|]\\s*/, '').trim();
+    if (mainTitle.length >= 4 && subtitle.length >= 4) return { mainTitle, subtitle };
+  }
+  return { mainTitle: cleaned, subtitle: '' };
+};
+const titleScaleEm = (mainTitle: string) => {
+  const len = Array.from(mainTitle.trim()).length;
+  return len <= 24 ? 1.92 : len <= 40 ? 1.62 : len <= 58 ? 1.42 : 1.26;
+};
 
 const PROFILES: Record<string, { size: string; margin: string; fontPx: number; lh: number; maxCh: string; label: string }> = {
   phone: { size: '108mm 192mm', margin: '10mm 8.5mm 12mm 8.5mm', fontPx: 15, lh: 1.88, maxCh: '42ch', label: 'Phone 6" Portrait' },
   tablet: { size: '152mm 218mm', margin: '15mm 14mm 17mm 14mm', fontPx: 16.5, lh: 1.92, maxCh: '56ch', label: 'Tablet 8"-10"' },
   print_a5: { size: 'A5', margin: '20mm 16mm 22mm 16mm', fontPx: 15.5, lh: 1.9, maxCh: '54ch', label: 'Print A5 Book' },
+  print_a4: { size: 'A4', margin: '24mm 22mm 26mm 22mm', fontPx: 16.5, lh: 1.92, maxCh: '64ch', label: 'Print A4 Standard' },
   desktop: { size: '190mm 260mm', margin: '22mm 24mm 24mm 24mm', fontPx: 17.5, lh: 1.95, maxCh: '66ch', label: 'Desktop PC' },
 };
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
@@ -1097,8 +1113,13 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
   }
   const chapters = Array.from(chapterMap.entries()).sort((a, b) => a[0] - b[0]);
 
+  const { mainTitle: mainTitleBnRaw, subtitle: subTitleBnRaw } = splitBookTitle(titleBnRaw);
+  const mainTitleBn = esc(mainTitleBnRaw);
+  const subTitleBn = esc(subTitleBnRaw);
+  const mainTitleEm = titleScaleEm(mainTitleBnRaw);
+
   const tocHtml = chapters
-    .map(([, ch], i) => \`<li><a href="#ch-\${i + 1}">\${toBn(i + 1)}. \${esc(stripChPrefix(ch.titleBn))}</a></li>\`)
+    .map(([, ch], i) => \`<li><a href="#ch-\${i + 1}"><span class="toc-num">\${toBn(i + 1)}.</span> \${esc(stripChPrefix(ch.titleBn))}</a></li>\`)
     .join('\\n    ');
 
   const chaptersHtml = chapters
@@ -1111,7 +1132,9 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
           renderBlockHtml(block, assetByToken, (fn) => toPosix(path.relative(outDir, path.join(assetsRoot, fn))))
         )
         .join('\\n    ');
-      return \`<section id="ch-\${i + 1}" class="chapter"><div class="chapter-kicker">অধ্যায় \${toBn(i + 1)}</div><h2 class="chapter-title">\${esc(stripChPrefix(ch.titleBn))}</h2>\${blocks}</section>\`;
+      const cleanTitle = stripChPrefix(ch.titleBn);
+      const chSize = Array.from(cleanTitle).length > 42 ? '1.55em' : '1.82em';
+      return \`<section id="ch-\${i + 1}" class="chapter"><header class="chapter-header"><div class="chapter-kicker">অধ্যায় \${toBn(i + 1)}</div><h2 class="chapter-title" style="font-size:\${chSize};">\${esc(cleanTitle)}</h2></header>\${blocks}</section>\`;
     })
     .join('\\n  ');
 
@@ -1123,19 +1146,23 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
   @page :first { @bottom-center { content: none; } }
   * { box-sizing: border-box; }
   body { font-family: "Noto Serif Bengali", "Noto Sans Bengali", "Kalpurush", "SolaimanLipi", Georgia, serif; font-size: \${p.fontPx}px; line-height: \${p.lh}; max-width: \${p.maxCh}; margin: 0 auto; color: #0f172a; orphans: 3; widows: 3; text-rendering: optimizeLegibility; }
-  .title-page { text-align: center; padding: 64px 8px 44px; break-after: page; }
-  .title-page h1 { font-size: 1.9em; line-height: 1.38; margin: 0 0 10px; }
-  .title-page .rule { width: 48px; height: 1px; background: #cbd5e1; margin: 28px auto 20px; }
+  .title-page { text-align: center; padding: 60px 14px 44px; break-after: page; }
+  .title-page h1 { font-size: \${mainTitleEm}em; max-width: 92%; margin: 0 auto 12px; line-height: 1.44; font-weight: 700; text-wrap: balance; overflow-wrap: break-word; }
+  .title-page .title-bn-sub { font-size: 1.04em; font-weight: 500; color: #334155; max-width: 88%; margin: 0 auto 18px; line-height: 1.62; text-wrap: balance; }
+  .title-page .subtitle-en { font-size: 0.82em; color: #64748b; max-width: 86%; margin: 0 auto 24px; line-height: 1.55; text-wrap: balance; }
+  .title-page .rule { width: 52px; height: 1px; background: #cbd5e1; margin: 28px auto 20px; }
   .colophon { padding: 24px 0; font-size: 0.84em; color: #334155; break-after: page; }
   .colophon h2 { font-size: 1.12em; color: #0f172a; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
   .toc { margin: 20px 0; break-after: page; }
-  .toc h2 { font-size: 1.3em; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; break-after: avoid; }
+  .toc h2 { font-size: 1.38em; padding-bottom: 8px; border-bottom: 2px solid #e2e8f0; break-after: avoid; }
   .toc ol { list-style: none; padding: 0; }
   .toc li { padding: 7px 0; border-bottom: 1px solid #f1f5f9; }
   .toc a { color: #0f172a; text-decoration: none; }
+  .toc-num { color: #1e3a8a; font-weight: 700; margin-right: 8px; }
   .chapter { break-before: page; }
-  .chapter-kicker { font-size: 0.8em; color: #64748b; break-after: avoid; }
-  .chapter-title { font-size: 1.48em; line-height: 1.4; margin: 4px 0 18px; break-after: avoid; }
+  .chapter-header { margin: 0 0 22px; padding-bottom: 14px; border-bottom: 2px solid #e2e8f0; break-after: avoid; }
+  .chapter-kicker { display: inline-block; font-size: 0.98em; font-weight: 700; color: #1e3a8a; background: #eff6ff; border: 1px solid #bfdbfe; border-left: 3.5px solid #1d4ed8; padding: 4px 12px; border-radius: 4px; margin-bottom: 12px; break-after: avoid; }
+  .chapter-title { font-size: 1.82em; line-height: 1.42; margin: 0; font-weight: 700; color: #0f172a; text-wrap: balance; break-after: avoid; }
   h2, h3, h4 { break-after: avoid; }
   .bn-highlight { background: #fef08a; padding: 0.04em 0.22em; border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   .bn-small { font-size: 0.82em; color: #475569; display: block; margin-top: 0.5em; }
@@ -1149,7 +1176,7 @@ async function assembleOne(ledgerPath: string, assetsRoot: string, outDir: strin
   p { margin: 0 0 1.05em; text-align: justify; hyphens: none; overflow-wrap: break-word; }
   @media print { body { max-width: none; padding: 0; } }
 </style></head><body>
-  <header class="title-page"><div style="font-size:0.78em;color:#64748b;margin-bottom:16px;">প্রথম বাংলা সংস্করণ · \${yearBn}</div><h1>\${titleBn}</h1><div style="font-size:0.84em;color:#475569;">মূল গ্রন্থ: \${titleEn}</div><p style="text-align:center;margin-top:20px;font-size:1.12em;"><strong>\${authorBn}</strong></p><div class="rule"></div><p style="text-align:center;margin:0;"><strong>\${houseBn}</strong></p><p style="text-align:center;font-size:0.84em;color:#475569;">\${city}</p></header>
+  <header class="title-page"><div style="font-size:0.8em;color:#64748b;margin-bottom:18px;">প্রথম বাংলা সংস্করণ · \${yearBn}</div><h1>\${mainTitleBn}</h1>\${subTitleBn ? \`<div class="title-bn-sub">\${subTitleBn}</div>\` : ''}<div class="subtitle-en">মূল গ্রন্থ: \${titleEn}</div><p style="text-align:center;margin-top:20px;font-size:1.12em;"><strong>\${authorBn}</strong></p><div class="rule"></div><p style="text-align:center;margin:0;text-wrap:balance;"><strong>\${houseBn}</strong></p><p style="text-align:center;font-size:0.84em;color:#475569;">\${city}</p></header>
   <section class="colophon"><h2>প্রকাশনা ও স্বত্ব পরিচিতি</h2><p style="text-align:left;"><strong>গ্রন্থের নাম:</strong> \${titleBn}</p><p style="text-align:left;"><strong>মূল গ্রন্থ:</strong> \${titleEn}</p><p style="text-align:left;"><strong>প্রকাশক:</strong> \${houseBn} · \${city} · \${yearBn}</p><p style="text-align:left;margin-top:12px;font-weight:600;">\${rights}</p></section>
   <nav class="toc"><h2>সূচিপত্র</h2><ol>\${tocHtml}</ol></nav>
   <main>\${chaptersHtml}</main>
@@ -1252,7 +1279,7 @@ const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const profiles = process.argv.includes('--all-profiles')
-  ? ['phone', 'tablet', 'print_a5', 'desktop']
+  ? ['phone', 'tablet', 'print_a5', 'print_a4', 'desktop']
   : [process.argv.includes('--profile') ? process.argv[process.argv.indexOf('--profile') + 1] : ${defaultLayoutLit}];
 
 const CHROME_CANDIDATES = [
@@ -1551,7 +1578,7 @@ Always preserve visual hierarchy so every phone, tablet, print, and PC page feel
 3. **Intent-First Sense Decoding**: Every worker reads one small slice + scoped glossary + continuity tail, decoding idioms and authorial intent before writing Bangla so even lower Flash models translate *meaning-for-meaning* instead of literal calques.
 4. **Deterministic 6-Check Gate**: \`scripts/audit-bangla.ts\` mathematically checks Bengali Unicode purity, length ratio, \`[[ASSET:...]]\` figure preservation, heading/quote/highlight retention, anti-literal calques + factual numeric parity, and **strict zero AI dashes/symbols**.
 5. **Lock-Free Automatic Recursive Halving**: If a chunk fails twice inside a worker shard, the orchestrator splits it lock-free into \`<id>a\` + \`<id>b\` inside that worker's own shard and stitches them back seamlessly on \`merge\`.
-6. **100% Completeness Barrier & Multi-Device Builds**: \`scripts/build-pdf.ts --all-books\` emits complete beginning-to-end Bangla **PDF** (via Typst or Chromium HarfBuzz) + **EPUB 3.0** for \`phone\`, \`tablet\`, \`print_a5\`, and \`desktop\`.
+6. **100% Completeness Barrier & Multi-Device Builds**: \`scripts/build-pdf.ts --all-books\` emits complete beginning-to-end Bangla **PDF** (via Typst or Chromium HarfBuzz) + **EPUB 3.0** for \`phone\`, \`tablet\`, \`print_a5\`, \`print_a4\`, and \`desktop\`.
 `;
 
   const pkgJson = JSON.stringify(

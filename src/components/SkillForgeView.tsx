@@ -37,6 +37,7 @@ const LAYOUT_OPTIONS: Array<{ id: DeviceLayoutProfile; label: string }> = [
   { id: 'phone', label: 'Phone (6" Portrait — Default)' },
   { id: 'tablet', label: 'Tablet (8"–10" Reader)' },
   { id: 'print_a5', label: 'Print Book (A5 Paperback)' },
+  { id: 'print_a4', label: 'Print Book (A4 Standard)' },
   { id: 'desktop', label: 'Desktop PC (Widescreen)' },
 ];
 

@@ -58,6 +58,18 @@ export const LAYOUT_PROFILES: Record<DeviceLayoutProfile, LayoutProfileSpec> = {
     previewMaxWidthPx: 560,
     description: 'Standard Dhaka/Kolkata paperback book press layout with binding-safe margins and Bengali page numbers.',
   },
+  print_a4: {
+    id: 'print_a4',
+    label: 'Print Book (A4 Standard)',
+    shortLabel: 'Print A4',
+    pageSizeCss: 'A4',
+    marginCss: '24mm 22mm 26mm 22mm',
+    bodyFontSizePx: 16.5,
+    lineHeight: 1.92,
+    maxWidthCh: '64ch',
+    previewMaxWidthPx: 680,
+    description: 'Full A4 (210mm x 297mm) print edition with generous margins, large chapter headers, and crisp Bangla measure.',
+  },
   desktop: {
     id: 'desktop',
     label: 'Desktop PC / Widescreen',
@@ -71,6 +83,36 @@ export const LAYOUT_PROFILES: Record<DeviceLayoutProfile, LayoutProfileSpec> = {
     description: 'Spacious desktop monitor reading format with editorial callouts and full-width graphs.',
   },
 };
+
+export function protectBanglaCompoundHyphens(text: string): string {
+  return text.replace(/([\u0980-\u09FF])-([\u0980-\u09FF])/g, '$1\u2011$2');
+}
+
+export function splitBookTitle(rawTitle: string): { mainTitle: string; subtitle: string } {
+  const cleaned = protectBanglaCompoundHyphens(rawTitle.trim());
+  const sepIdx = cleaned.search(/\s*[:：|]\s*/);
+  if (sepIdx > 0) {
+    const mainTitle = cleaned.slice(0, sepIdx).trim();
+    const subtitle = cleaned.slice(sepIdx).replace(/^\s*[:：|]\s*/, '').trim();
+    if (mainTitle.length >= 4 && subtitle.length >= 4) {
+      return { mainTitle, subtitle };
+    }
+  }
+  return { mainTitle: cleaned, subtitle: '' };
+}
+
+export function getAdaptiveTitleScaleEm(mainTitle: string): number {
+  const len = Array.from(mainTitle.trim()).length;
+  if (len <= 24) return 1.92;
+  if (len <= 40) return 1.62;
+  if (len <= 58) return 1.42;
+  return 1.26;
+}
+
+export function stripLeadingChapterPrefix(rawTitle: string): string {
+  const cleaned = rawTitle.replace(/^(?:অধ্যায়|অধ্যায়|Chapter)\s*[০-৯0-9]+\s*[:.\-–—]?\s*/i, '').trim();
+  return protectBanglaCompoundHyphens(cleaned || rawTitle.trim());
+}
 
 export function toBengaliDigits(input: number | string): string {
   return String(input).replace(/\d/g, (d) => BENGALI_DIGITS[Number(d)] ?? d);
@@ -262,10 +304,11 @@ export function assemblePrintReadyHtml(
   );
   const yearBn = toBengaliDigits(new Date().getFullYear());
 
-  const stripLeadingChapterPrefix = (rawTitle: string): string => {
-    const cleaned = rawTitle.replace(/^(?:অধ্যায়|অধ্যায়|Chapter)\s*[০-৯0-9]+\s*[:.\-–—]?\s*/i, '').trim();
-    return cleaned || rawTitle.trim();
-  };
+  const rawTitleBn = project.titleBangla.trim() || project.title;
+  const { mainTitle: mainTitleBnRaw, subtitle: subTitleBnRaw } = splitBookTitle(rawTitleBn);
+  const titleFontEm = getAdaptiveTitleScaleEm(mainTitleBnRaw);
+  const mainTitleBn = escapeHtml(mainTitleBnRaw);
+  const subTitleBn = escapeHtml(subTitleBnRaw);
 
   const tocHtml = chapters
     .map(
@@ -285,10 +328,15 @@ export function assemblePrintReadyHtml(
         ? renderBlocksWithAssetsHtml(mergedText, assetMap, 'html')
         : '<p class="pending-note">[এই অধ্যায়টি এখনো অনূদিত হয়নি]</p>';
 
+      const cleanChTitle = stripLeadingChapterPrefix(ch.titleBangla);
+      const chTitleSize = Array.from(cleanChTitle).length > 42 ? '1.55em' : '1.82em';
+
       return `
     <section id="chapter-${idx + 1}" class="chapter">
-      <div class="chapter-kicker">অধ্যায় ${toBengaliDigits(idx + 1)}</div>
-      <h2 class="chapter-title">${escapeHtml(stripLeadingChapterPrefix(ch.titleBangla))}</h2>
+      <header class="chapter-header">
+        <div class="chapter-kicker">অধ্যায় ${toBengaliDigits(idx + 1)}</div>
+        <h2 class="chapter-title" style="font-size: ${chTitleSize};">${escapeHtml(cleanChTitle)}</h2>
+      </header>
       ${bodyHtml}
     </section>`;
     })
@@ -333,15 +381,40 @@ export function assemblePrintReadyHtml(
     }
     .title-page {
       text-align: center;
-      padding: 64px 8px 44px;
+      padding: 60px 14px 44px;
       break-after: page;
     }
-    .title-page .edition-tag { font-size: 0.78em; color: #64748b; margin-bottom: 18px; }
-    .title-page h1 { font-size: 1.92em; margin: 0 0 12px; line-height: 1.38; font-weight: 700; color: #0f172a; }
-    .title-page .subtitle { font-size: 0.84em; color: #475569; margin-bottom: 28px; }
-    .title-page .author { font-size: 1.15em; font-weight: 600; color: #1e293b; margin-bottom: 44px; }
-    .title-page .rule { width: 48px; height: 1px; background: #cbd5e1; margin: 0 auto 24px; }
-    .title-page .imprint { font-size: 1.02em; font-weight: 700; color: #0f172a; }
+    .title-page .edition-tag { font-size: 0.8em; color: #64748b; margin-bottom: 20px; }
+    .title-page h1 {
+      font-size: ${titleFontEm}em;
+      max-width: 92%;
+      margin: 0 auto 12px;
+      line-height: 1.44;
+      font-weight: 700;
+      color: #0f172a;
+      text-wrap: balance;
+      overflow-wrap: break-word;
+    }
+    .title-page .title-bn-sub {
+      font-size: 1.04em;
+      font-weight: 500;
+      color: #334155;
+      max-width: 88%;
+      margin: 0 auto 18px;
+      line-height: 1.62;
+      text-wrap: balance;
+    }
+    .title-page .subtitle {
+      font-size: 0.82em;
+      color: #64748b;
+      max-width: 86%;
+      margin: 0 auto 28px;
+      line-height: 1.55;
+      text-wrap: balance;
+    }
+    .title-page .author { font-size: 1.15em; font-weight: 600; color: #1e293b; margin-bottom: 42px; }
+    .title-page .rule { width: 52px; height: 1px; background: #cbd5e1; margin: 0 auto 24px; }
+    .title-page .imprint { font-size: 1.02em; font-weight: 700; color: #0f172a; max-width: 90%; margin: 0 auto; text-wrap: balance; }
     .title-page .city { font-size: 0.84em; color: #475569; margin-top: 4px; }
     .colophon {
       margin: 24px 0;
@@ -353,14 +426,40 @@ export function assemblePrintReadyHtml(
     .colophon h2 { font-size: 1.12em; color: #0f172a; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
     .colophon p { margin: 0 0 8px; text-align: left; }
     .toc { margin: 20px 0 36px; break-after: page; }
-    .toc h2 { font-size: 1.32em; margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; break-after: avoid; }
+    .toc h2 { font-size: 1.38em; margin: 0 0 16px; padding-bottom: 8px; border-bottom: 2px solid #e2e8f0; break-after: avoid; }
     .toc ol { list-style: none; padding: 0; margin: 0; }
     .toc li { padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
     .toc a { color: #0f172a; text-decoration: none; }
-    .toc-num { color: #64748b; margin-right: 8px; font-weight: 600; }
+    .toc-num { color: #1e3a8a; margin-right: 8px; font-weight: 700; }
     .chapter { margin-top: 24px; break-before: page; }
-    .chapter-kicker { font-size: 0.8em; color: #64748b; margin-bottom: 4px; break-after: avoid; }
-    .chapter-title { font-size: 1.48em; margin: 0 0 18px; line-height: 1.4; font-weight: 700; color: #0f172a; break-after: avoid; }
+    .chapter-header {
+      margin: 0 0 22px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid #e2e8f0;
+      break-after: avoid;
+    }
+    .chapter-kicker {
+      display: inline-block;
+      font-size: 0.98em;
+      font-weight: 700;
+      color: #1e3a8a;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-left: 3.5px solid #1d4ed8;
+      padding: 4px 12px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      break-after: avoid;
+    }
+    .chapter-title {
+      font-size: 1.82em;
+      margin: 0;
+      line-height: 1.42;
+      font-weight: 700;
+      color: #0f172a;
+      text-wrap: balance;
+      break-after: avoid;
+    }
     .bn-h1 { font-size: 1.4em; margin: 1.35em 0 0.55em; font-weight: 700; break-after: avoid; }
     .bn-h2 { font-size: 1.18em; margin: 1.3em 0 0.5em; font-weight: 700; color: #1e293b; break-after: avoid; }
     .bn-h3 { font-size: 1.04em; margin: 1.1em 0 0.4em; font-weight: 600; color: #334155; break-after: avoid; }
@@ -420,7 +519,8 @@ export function assemblePrintReadyHtml(
 <body>
   <header class="title-page">
     <div class="edition-tag">প্রথম বাংলা সংস্করণ · ${yearBn}</div>
-    <h1>${titleBn}</h1>
+    <h1>${mainTitleBn}</h1>
+    ${subTitleBn ? `<div class="title-bn-sub">${subTitleBn}</div>` : ''}
     <div class="subtitle">মূল গ্রন্থ: ${titleEn}</div>
     <div class="author">${authorBn}</div>
     <div class="rule"></div>

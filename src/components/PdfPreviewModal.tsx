@@ -16,7 +16,10 @@ import type {
 } from '../types/translator';
 import {
   LAYOUT_PROFILES,
+  getAdaptiveTitleScaleEm,
   groupChunksByChapter,
+  splitBookTitle,
+  stripLeadingChapterPrefix,
   toBengaliDigits,
 } from '../lib/exporters';
 import {
@@ -169,6 +172,7 @@ const PROFILE_BUTTONS: Array<{
   { id: 'phone', label: 'Phone (6")', icon: Smartphone },
   { id: 'tablet', label: 'Tablet', icon: Tablet },
   { id: 'print_a5', label: 'Print A5', icon: Printer },
+  { id: 'print_a4', label: 'Print A4', icon: Printer },
   { id: 'desktop', label: 'Desktop PC', icon: Monitor },
 ];
 
@@ -191,6 +195,10 @@ export function PdfPreviewModal({
   const yearBn = toBengaliDigits(new Date().getFullYear());
   const houseBn =
     project.publisher.publishingHouseBangla || project.publisher.publishingHouse;
+  const { mainTitle: mainTitleBn, subtitle: subTitleBn } = splitBookTitle(
+    project.titleBangla || project.title
+  );
+  const titleFontEm = getAdaptiveTitleScaleEm(mainTitleBn);
 
   const handleSelectProfile = (profile: DeviceLayoutProfile) => {
     setActiveProfile(profile);
@@ -342,22 +350,30 @@ export function PdfPreviewModal({
             className="mx-auto bg-white border border-slate-200 px-6 py-9 sm:px-10 sm:py-12 font-bangla text-slate-900 shadow-2xs transition-all duration-200 print:max-w-none print:border-0 print:shadow-none print:px-0 print:py-0"
           >
             {/* Title Page */}
-            <header className="text-center pb-10 mb-10 border-b border-slate-200 break-after-page">
-              <div className="text-[0.78em] text-slate-500 mb-4">
+            <header className="text-center px-3 pb-10 mb-10 border-b border-slate-200 break-after-page">
+              <div className="text-[0.8em] text-slate-500 mb-5">
                 প্রথম বাংলা সংস্করণ · {yearBn}
               </div>
-              <h1 className="text-[1.85em] font-bold text-slate-900 leading-snug">
-                {project.titleBangla || project.title}
+              <h1
+                style={{ fontSize: `${titleFontEm}em` }}
+                className="max-w-[92%] mx-auto font-bold text-slate-900 leading-[1.44] text-balance"
+              >
+                {mainTitleBn}
               </h1>
-              <div className="text-[0.84em] text-slate-500 mt-2 font-sans">
-                Original English Edition: {project.title}
+              {subTitleBn && (
+                <div className="max-w-[88%] mx-auto text-[1.04em] font-medium text-slate-700 mt-3 leading-[1.6] text-balance">
+                  {subTitleBn}
+                </div>
+              )}
+              <div className="max-w-[86%] mx-auto text-[0.82em] text-slate-500 mt-4 font-sans text-balance">
+                মূল গ্রন্থ: {project.title}
               </div>
-              <div className="text-[1.1em] font-medium text-slate-800 mt-6">
+              <div className="text-[1.12em] font-semibold text-slate-800 mt-7">
                 {project.authorBangla || project.author}
               </div>
 
               <div className="mt-10 pt-6 border-t border-slate-100">
-                <div className="text-[1em] font-bold text-slate-900">{houseBn}</div>
+                <div className="text-[1em] font-bold text-slate-900 text-balance">{houseBn}</div>
                 <div className="text-[0.8em] text-slate-600 mt-1">
                   {project.publisher.imprintCity}
                 </div>
@@ -381,18 +397,18 @@ export function PdfPreviewModal({
 
             {/* Table of Contents */}
             <nav className="pb-8 mb-8 border-b border-slate-200 break-after-page">
-              <h2 className="text-[1.25em] font-bold text-slate-900 mb-3">সূচিপত্র</h2>
-              <ol className="space-y-2 text-[0.92em]">
+              <h2 className="text-[1.35em] font-bold text-slate-900 mb-3 pb-2 border-b-2 border-slate-200">সূচিপত্র</h2>
+              <ol className="space-y-2 text-[0.94em]">
                 {chapters.map((ch, idx) => (
                   <li
                     key={ch.chapterIndex}
                     className="flex items-baseline justify-between gap-3 border-b border-slate-100 pb-1.5"
                   >
                     <span>
-                      <span className="text-slate-500 mr-2">
+                      <span className="text-blue-900 font-bold mr-2">
                         {toBengaliDigits(idx + 1)}.
                       </span>
-                      {ch.titleBangla}
+                      {stripLeadingChapterPrefix(ch.titleBangla)}
                     </span>
                   </li>
                 ))}
@@ -406,14 +422,21 @@ export function PdfPreviewModal({
                   .map((ck) => ck.banglaText.trim())
                   .filter(Boolean)
                   .join('\n\n');
+                const cleanTitle = stripLeadingChapterPrefix(ch.titleBangla);
+                const chSize = Array.from(cleanTitle).length > 42 ? '1.55em' : '1.82em';
                 return (
                   <section key={ch.chapterIndex} className="break-before-page">
-                    <div className="text-[0.8em] text-slate-500 mb-1 break-after-avoid">
-                      অধ্যায় {toBengaliDigits(idx + 1)}
-                    </div>
-                    <h2 className="text-[1.45em] font-bold text-slate-900 mb-5 leading-snug break-after-avoid">
-                      {ch.titleBangla}
-                    </h2>
+                    <header className="mb-6 pb-3.5 border-b-2 border-slate-200 break-after-avoid">
+                      <div className="inline-block text-[0.98em] font-bold text-blue-900 bg-blue-50 border border-blue-200 border-l-[3.5px] border-l-blue-700 px-3 py-1 rounded-xs mb-3 break-after-avoid">
+                        অধ্যায় {toBengaliDigits(idx + 1)}
+                      </div>
+                      <h2
+                        style={{ fontSize: chSize }}
+                        className="font-bold text-slate-900 leading-[1.42] text-balance break-after-avoid"
+                      >
+                        {cleanTitle}
+                      </h2>
+                    </header>
                     {combinedBangla ? (
                       <div className="text-slate-900">
                         {renderBanglaBodyWithAssets(combinedBangla, project.assets)}
