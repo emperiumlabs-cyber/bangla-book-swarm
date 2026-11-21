@@ -1,0 +1,6 @@
+{
+  "name": "LipiForge — Bangla Book Translator & Skill Builder",
+  "description": "Production-grade English-to-Bangla full-book translator workbench and open-source Antigravity/Gemini agent skill generator with deterministic coverage auditing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
