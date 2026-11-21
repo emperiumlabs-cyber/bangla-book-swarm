@@ -136,9 +136,9 @@ function splitOversizedParagraph(paragraph: string, maxWords: number): string[] 
  */
 export function buildTranslationChunks(
   chapters: ParsedChapter[],
-  maxWordsPerChunk = 450
+  maxWordsPerChunk = 3200
 ): TranslationChunk[] {
-  const safeMax = Math.max(80, Math.min(2000, Math.floor(maxWordsPerChunk)));
+  const safeMax = Math.max(80, Math.min(4500, Math.floor(maxWordsPerChunk)));
   const chunks: TranslationChunk[] = [];
   let prevContextTail = '';
 
@@ -193,7 +193,7 @@ export function buildTranslationChunks(
  * so smaller models translate a smaller slice with zero truncation.
  */
 export function splitChunkInHalf(chunk: TranslationChunk): [TranslationChunk, TranslationChunk] | null {
-  if (chunk.splitDepth >= 3 || chunk.wordCount < 40) {
+  if (chunk.splitDepth >= 4 || chunk.wordCount < 40) {
     return null;
   }
 

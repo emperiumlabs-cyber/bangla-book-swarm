@@ -5,9 +5,13 @@ import {
   assemblePrintReadyHtml,
   buildEpubFileEntries,
 } from '../lib/exporters';
-import { slugifyPublisher } from '../lib/skillGenerator';
+import { slugifyPublisher, getRegisterMeta } from '../lib/skillGenerator';
 import { buildAntigravityLedgerJson } from '../lib/antigravityBridge';
-import { buildSwarmPlan } from '../lib/swarmPlanner';
+import {
+  buildSwarmPlan,
+  formatWorkerInputPacket,
+  type WorkerPacketBlock,
+} from '../lib/swarmPlanner';
 
 export function triggerBlobDownload(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -134,6 +138,7 @@ export async function downloadAntigravityWorkspaceZip(
     assets: number;
   }> = [];
   const swarmInputs: Array<{ slug: string; title: string; chunkIds: string[] }> = [];
+  const projectBySlug = new Map<string, BookProject>();
 
   for (const proj of projects) {
     const base = slugifyPublisher(proj.title || proj.fileName || 'book');
@@ -141,6 +146,7 @@ export async function downloadAntigravityWorkspaceZip(
     let n = 2;
     while (usedSlugs.has(slug)) slug = `${base}-${n++}`;
     usedSlugs.add(slug);
+    projectBySlug.set(slug, proj);
 
     const ledgerObj = buildAntigravityLedgerJson(proj);
     const ledgerPath = `workspace/books/${slug}/ledger.json`;
@@ -217,19 +223,27 @@ export async function downloadAntigravityWorkspaceZip(
     )
   );
 
-  // Pre-compute lock-free disjoint worker shards for immediate one-shot Antigravity swarm execution
-  const plan = buildSwarmPlan(swarmInputs, primary.publisher.swarmConcurrency ?? 'auto');
+  // Pre-compute lock-free disjoint worker shards & Zero-Loop input packets for instant Hyper-Swarm v2 execution
+  const plan = buildSwarmPlan(
+    swarmInputs,
+    primary.publisher.swarmConcurrency ?? 'auto',
+    primary.publisher.maxWordsPerChunk
+  );
   folder.file(
     'workspace/swarm-plan.json',
     JSON.stringify(
       {
+        protocol: 'hyper-swarm-v2-zero-loop',
         workerCount: plan.workerCount,
         totalBooks: plan.totalBooks,
         totalPending: plan.totalChunks,
+        twoPassPolish: primary.publisher.twoPassPolish,
         defaultLayout: primary.publisher.defaultLayout ?? 'phone',
         shards: plan.shards.map((s) => ({
           workerId: s.workerId,
           count: s.assignments.length,
+          inputPacket: `workspace/shards/${s.workerId}-input.md`,
+          outputPacket: `workspace/shards/${s.workerId}-output.md`,
           books: s.bookSlugs,
         })),
       },
@@ -237,6 +251,10 @@ export async function downloadAntigravityWorkspaceZip(
       2
     )
   );
+
+  const registerMeta = getRegisterMeta(primary.publisher.register);
+  const houseBn =
+    primary.publisher.publishingHouseBangla || primary.publisher.publishingHouse || 'প্রথমা প্রকাশন';
 
   for (const shard of plan.shards) {
     folder.file(
@@ -253,6 +271,32 @@ export async function downloadAntigravityWorkspaceZip(
         2
       )
     );
+
+    const packetBlocks: WorkerPacketBlock[] = [];
+    for (const assignment of shard.assignments) {
+      const proj = projectBySlug.get(assignment.bookSlug);
+      const ck = proj?.chunks.find((c) => c.id === assignment.chunkId);
+      if (!proj || !ck) continue;
+      packetBlocks.push({
+        bookSlug: assignment.bookSlug,
+        bookTitle: proj.title,
+        chunkId: ck.id,
+        chapterTitle: ck.chapterTitle,
+        contextTail: ck.contextTail,
+        sourceText: ck.sourceText,
+      });
+    }
+
+    const inputPacketMd = formatWorkerInputPacket({
+      workerId: shard.workerId,
+      publisherBangla: houseBn,
+      registerLabel: registerMeta.label,
+      strictZeroEnglish: primary.publisher.strictZeroEnglish,
+      twoPassPolish: primary.publisher.twoPassPolish,
+      glossary: primary.glossary,
+      blocks: packetBlocks,
+    });
+    folder.file(`workspace/shards/${shard.workerId}-input.md`, inputPacketMd);
   }
 
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });

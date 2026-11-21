@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, Copy, Download, FileCode2, FolderGit2 } from 'lucide-react';
+import { Check, Copy, Download, FileCode2, FolderGit2, Zap } from 'lucide-react';
 import type {
   DeviceLayoutProfile,
   EditorialRegister,
@@ -12,6 +12,7 @@ import {
   generateSkillRepositoryFiles,
   getModelTierMeta,
 } from '../lib/skillGenerator';
+import { computeSwarmSpeedEstimate } from '../lib/swarmPlanner';
 import { downloadSkillRepoZip } from '../utils/downloads';
 
 interface SkillForgeViewProps {
@@ -22,9 +23,11 @@ interface SkillForgeViewProps {
 }
 
 const MODEL_TIERS: Array<{ id: ModelTierProfile; label: string; words: number }> = [
-  { id: 'weak_local', label: 'Lower Flash / Local LLM (3.5/3.8 Flash · 320w)', words: 320 },
+  { id: 'full_chapter_swarm', label: 'Full-Chapter Swarm (3,200w · 15x–30x)', words: 3200 },
+  { id: 'smart_block_swarm', label: 'Smart Macro-Block (1,500w · 10x–18x)', words: 1500 },
+  { id: 'high_context', label: 'Extended Scene Block (900 words)', words: 900 },
   { id: 'balanced_flash', label: 'Balanced Flash (550 words)', words: 550 },
-  { id: 'high_context', label: 'High Context (900 words)', words: 900 },
+  { id: 'weak_local', label: 'Legacy Micro-Chunk (320w · 4B–8B)', words: 320 },
 ];
 
 const REGISTERS: Array<{ id: EditorialRegister; label: string }> = [
@@ -113,6 +116,17 @@ export function SkillForgeView({
   const activeEditor =
     EDITOR_INSTALLS.find((e) => e.id === selectedEditor) ?? EDITOR_INSTALLS[0];
   const tierMeta = getModelTierMeta(publisher.modelTier);
+  const benchmark = useMemo(
+    () =>
+      computeSwarmSpeedEstimate({
+        totalWords: 60000,
+        bookCount: 1,
+        mode: publisher.swarmConcurrency ?? 'auto',
+        maxWordsPerChunk: publisher.maxWordsPerChunk,
+        twoPassPolish: publisher.twoPassPolish,
+      }),
+    [publisher.swarmConcurrency, publisher.maxWordsPerChunk, publisher.twoPassPolish]
+  );
 
   const handleCopy = async (key: string, text: string) => {
     try {
@@ -138,14 +152,14 @@ export function SkillForgeView({
       {/* Hero Summary & Primary Value Proposition */}
       <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-slate-200">
         <div className="max-w-2xl">
-          <div className="text-xs font-medium text-slate-500 mb-2">
-            Zero API Key Required · Native for Antigravity (3.5/3.8 Flash), Cursor, VS Code, Gemini CLI &amp; Claude Code
+          <div className="text-xs font-medium text-emerald-700 mb-2">
+            Hyper-Swarm v2 · 15x–30x Faster Full-Book Engine · Zero API Key · Native for Antigravity, Cursor, VS Code, Gemini CLI &amp; Claude Code
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
-            One-Shot Multi-Agent Bangla Book Translator Skill
+            Hyper-Swarm Bangla Book Translator Skill
           </h1>
           <p className="mt-2.5 text-sm sm:text-base text-slate-600 leading-relaxed">
-            Configure your Publishing House once, then drop <strong>1 book or 50+ books</strong> into Antigravity. Spawns <strong>10, 20, or 50+ lock-free parallel sub-agents</strong> on built-in 3.5/3.8 Flash with <strong>zero Gemini API key</strong>, compiling complete professional Bangla books from proper beginning (Title, Colophon, সূচিপত্র) to ending (সমাপ্ত) with exact meaning, zero AI dashes/slop, and untouched graphs and pictures.
+            Configure your Publishing House once, then drop <strong>1 full book or 50+ books</strong> into Antigravity. Uses <strong>Full-Chapter blocks (2,500–4,000w)</strong>, <strong>Zero-Loop 3-tool-call worker packets</strong>, and <strong>Strict 2-Pass Literary Polish</strong> across 10–50 parallel sub-agents — preserving original Page 1 covers, balanced titles, highlighted chapter headers, and untouched graphs.
           </p>
         </div>
 
@@ -166,6 +180,60 @@ export function SkillForgeView({
             <Download className="w-4 h-4" />
             {isDownloading ? 'Packaging ZIP...' : 'Download GitHub Repo (.zip)'}
           </button>
+        </div>
+      </section>
+
+      {/* Live Hyper-Swarm v2 Speed Telemetry Strip (60,000-word book benchmark) */}
+      <section
+        aria-label="Hyper-Swarm v2 speed telemetry"
+        data-testid="skill-speed-telemetry"
+        className="border border-emerald-200 bg-emerald-50/60 rounded-xl p-4 sm:p-5"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-lg bg-emerald-600 text-white shrink-0">
+              <Zap className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                Hyper-Swarm v2 Live Speed Benchmark (60,000-Word, 20-Chapter Book)
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Zero-Loop pre-bundled worker packets (3 tool calls per worker) + {publisher.maxWordsPerChunk.toLocaleString()}w blocks +{' '}
+                {publisher.twoPassPolish ? 'Strict 2-Pass Literary Polish' : 'Single-Pass + Retry'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-5 shrink-0">
+            <div>
+              <div className="text-[11px] text-slate-500">Tool Turns</div>
+              <div className="text-sm font-bold font-mono tabular-nums text-slate-900">
+                <span className="line-through text-slate-400 font-normal mr-1.5">
+                  {benchmark.legacyToolCalls}
+                </span>
+                {benchmark.hyperToolCalls}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-500">Parallel Agents</div>
+              <div className="text-sm font-bold font-mono tabular-nums text-slate-900">
+                {benchmark.activeWorkers} workers
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-500">Est. Book Time</div>
+              <div className="text-sm font-bold font-mono tabular-nums text-slate-900">
+                ~{benchmark.estimatedHyperMinutes} min
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-emerald-800 font-medium">Speedup</div>
+              <div className="text-sm font-bold font-mono tabular-nums text-emerald-700">
+                ~{benchmark.estimatedSpeedupX}x faster
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -291,23 +359,23 @@ export function SkillForgeView({
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
               <div>
-                <label
-                  htmlFor="model-tier"
-                  className="block text-xs font-medium text-slate-700 mb-1.5"
-                >
-                  Target Model Guardrail Profile
-                </label>
-                <select
-                  id="model-tier"
-                  value={publisher.modelTier}
-                  onChange={(e) => {
-                    const tier = e.target.value as ModelTierProfile;
-                    const found = MODEL_TIERS.find((t) => t.id === tier);
-                    onUpdatePublisher({
-                      modelTier: tier,
-                      maxWordsPerChunk: found?.words ?? 320,
-                    });
-                  }}
+                  <label
+                    htmlFor="model-tier"
+                    className="block text-xs font-medium text-slate-700 mb-1.5"
+                  >
+                    Block Size &amp; Speed Profile
+                  </label>
+                  <select
+                    id="model-tier"
+                    value={publisher.modelTier}
+                    onChange={(e) => {
+                      const tier = e.target.value as ModelTierProfile;
+                      const found = MODEL_TIERS.find((t) => t.id === tier);
+                      onUpdatePublisher({
+                        modelTier: tier,
+                        maxWordsPerChunk: found?.words ?? 3200,
+                      });
+                    }}
                   className="w-full px-3 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
                 >
                   {MODEL_TIERS.map((t) => (
@@ -423,34 +491,34 @@ export function SkillForgeView({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           <div className="border border-slate-200 rounded-lg p-4 bg-white">
-            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">01. 1 Book or 50+ Books</div>
-            <div className="text-sm font-semibold text-slate-900">Parallel Multi-Format Batch</div>
+            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">01. Full-Chapter Blocks</div>
+            <div className="text-sm font-semibold text-slate-900">9x Fewer Translation Units</div>
             <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-              <code className="font-mono">scripts/batch-extract.ts</code> ingests 1 or 50+ PDFs, EPUBs, DOCXs, ODTs, FB2s, RTFs, or LaTeX books simultaneously, fixing OCR hyphens and locking graphs behind <code className="font-mono">[[ASSET:...]]</code>.
+              Groups whole chapters (2,500–4,000w) with Page 1 cover preservation and untouched <code className="font-mono">[[ASSET:...]]</code> graphs so literary voice stays unbroken.
             </p>
           </div>
 
           <div className="border border-slate-200 rounded-lg p-4 bg-white">
-            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">02. Dynamic Swarm (10–50)</div>
-            <div className="text-sm font-semibold text-slate-900">Lock-Free Parallel Sub-Agents</div>
+            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">02. Zero-Loop Shards</div>
+            <div className="text-sm font-semibold text-slate-900">3 Tool Calls Per Worker</div>
             <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-              <code className="font-mono">scripts/swarm-orchestrator.ts</code> splits chunks into disjoint shards with atomic per-chunk files so 10, 20, or 50 Antigravity 3.8 Flash sub-agents finish in one shot with zero collisions.
+              Pre-generates <code className="font-mono">worker-XX-input.md</code> packets with 1-to-1 chapter fan-out and single-shot <code className="font-mono">submit-batch</code> via <code className="font-mono">fast-run.mjs</code>.
             </p>
           </div>
 
           <div className="border border-slate-200 rounded-lg p-4 bg-white">
-            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">03. 6-Check Barrier + Speed</div>
-            <div className="text-sm font-semibold text-slate-900">Meaning &amp; Zero AI Slop</div>
+            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">03. Strict 2-Pass Polish</div>
+            <div className="text-sm font-semibold text-slate-900">Max Quality + Auto-Split</div>
             <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-              Enforces 100% completion across every book before build — rejecting literal calques, dropped numbers, em-dashes/double dashes/emojis, or dropped figures (with optional Rust/Rayon speed-up).
+              Pass 1 drafts idiomatic Bangla; Pass 2 polishes cadence and stamps <code className="font-mono">POLISH_VERIFIED</code>. Only failed blocks auto-halve into targeted retries.
             </p>
           </div>
 
           <div className="border border-slate-200 rounded-lg p-4 bg-white">
-            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">04. Pro Beginning to End</div>
-            <div className="text-sm font-semibold text-slate-900">Phone · Tablet · A5 · PC</div>
+            <div className="text-xs font-mono text-slate-500 tabular-nums mb-1">04. Publication Ready</div>
+            <div className="text-sm font-semibold text-slate-900">A4 · A5 · Phone · Tablet</div>
             <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-              Parallel PDF builder renders Title Page, Colophon, <span className="font-bangla">সূচিপত্র</span> TOC, rich typography, untouched figures, and <span className="font-bangla">সমাপ্ত</span> back-matter across all 50 books automatically.
+              Preserved Page 1 Cover, balanced titles, bold <span className="font-bangla">অধ্যায়</span> headers, <span className="font-bangla">সূচিপত্র</span> TOC, and <span className="font-bangla">সমাপ্ত</span> back-matter across 1–50 books.
             </p>
           </div>
         </div>

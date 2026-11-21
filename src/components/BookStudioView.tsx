@@ -9,12 +9,13 @@ import {
   Save,
   Trash2,
   Upload,
+  Zap,
 } from 'lucide-react';
-import type { BookAsset, BookProject } from '../types/translator';
+import type { BookAsset, BookProject, PublisherConfig } from '../types/translator';
 import { countWords } from '../lib/chunker';
 import { LAYOUT_PROFILES, toBengaliDigits } from '../lib/exporters';
 import { parseImportedProjectOrLedger } from '../lib/antigravityBridge';
-import { computeAdaptiveWorkerCount } from '../lib/swarmPlanner';
+import { computeAdaptiveWorkerCount, computeSwarmSpeedEstimate } from '../lib/swarmPlanner';
 import { downloadCheckpointJson } from '../utils/downloads';
 
 export interface IngestedBookPayload {
@@ -36,6 +37,7 @@ interface BookStudioViewProps {
   onUpdateProjectMeta: (
     patch: Partial<Pick<BookProject, 'title' | 'titleBangla' | 'author' | 'authorBangla'>>
   ) => void;
+  onUpdatePublisher: (patch: Partial<PublisherConfig>) => void;
   onUpdateAssetCaption: (assetId: string, captionBangla: string) => void;
   onIngestBooks: (payloads: IngestedBookPayload[], mode: 'replace' | 'append') => void;
   onRechunkBook: (maxWords: number) => void;
@@ -52,6 +54,7 @@ export function BookStudioView({
   onSelectBatchBook,
   onRemoveBatchBook,
   onUpdateProjectMeta,
+  onUpdatePublisher,
   onUpdateAssetCaption,
   onIngestBooks,
   onRechunkBook,
@@ -86,6 +89,7 @@ export function BookStudioView({
   const activeLayoutSpec = LAYOUT_PROFILES[project.publisher.defaultLayout ?? 'phone'];
 
   const totalBatchChunks = batchBooks.reduce((sum, b) => sum + b.chunks.length, 0);
+  const totalBatchWords = batchBooks.reduce((sum, b) => sum + b.totalWords, 0);
   const pendingBatchChunks = batchBooks.reduce(
     (sum, b) => sum + b.chunks.filter((c) => c.status !== 'passed').length,
     0
@@ -93,8 +97,17 @@ export function BookStudioView({
   const plannedSubAgents = computeAdaptiveWorkerCount(
     pendingBatchChunks > 0 ? pendingBatchChunks : totalBatchChunks,
     batchBooks.length,
-    project.publisher.swarmConcurrency ?? 'auto'
+    project.publisher.swarmConcurrency ?? 'auto',
+    project.publisher.maxWordsPerChunk
   );
+  const speedTelemetry = computeSwarmSpeedEstimate({
+    totalWords: Math.max(totalBatchWords, 320),
+    activeChunks: totalBatchChunks,
+    bookCount: batchBooks.length,
+    mode: project.publisher.swarmConcurrency ?? 'auto',
+    maxWordsPerChunk: project.publisher.maxWordsPerChunk,
+    twoPassPolish: project.publisher.twoPassPolish,
+  });
 
   const handleExportWorkspace = async () => {
     setIsExportingWorkspace(true);
@@ -232,7 +245,7 @@ export function BookStudioView({
             Book Batch &amp; Antigravity Swarm Runner
           </h1>
           <p className="text-sm text-slate-600 mt-1.5 max-w-2xl">
-            Upload <strong>1 book or 50+ books at once</strong> locally with zero Gemini API key. Export a pre-sharded Antigravity Swarm Workspace (.zip) for 10, 20, or 50 parallel 3.8 Flash sub-agents, then import your completed <code className="font-mono text-xs text-slate-800">ledger.json</code> to proof and build Phone, Tablet, Print A5, or Desktop Bangla PDFs.
+            Upload <strong>1 book or 50+ books at once</strong> locally with zero Gemini API key. Export a pre-sharded Antigravity Swarm Workspace (.zip) for 10, 20, or 50 parallel 3.8 Flash sub-agents, then import your completed <code className="font-mono text-xs text-slate-800">ledger.json</code> to proof and build Phone, Tablet, Print A5, Print A4, or Desktop Bangla PDFs.
           </p>
         </div>
 
@@ -270,6 +283,34 @@ export function BookStudioView({
           <span>{statusNotice}</span>
         </div>
       )}
+
+      {/* Live Hyper-Swarm v2 Zero-Loop Speed Telemetry Strip */}
+      <section
+        aria-label="Active workspace speed telemetry"
+        data-testid="studio-speed-telemetry"
+        className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50/50 text-xs"
+      >
+        <div className="flex items-center gap-2.5">
+          <Zap className="w-4 h-4 text-emerald-700 shrink-0" />
+          <span className="text-slate-700">
+            <strong className="font-semibold text-slate-900">Hyper-Swarm v2 Zero-Loop Plan:</strong>{' '}
+            Pre-bundled <code className="font-mono text-[11px]">worker-XX-input.md</code> packets ({project.publisher.maxWordsPerChunk.toLocaleString()}w blocks ·{' '}
+            {project.publisher.twoPassPolish ? 'Strict 2-Pass Polish' : 'Single-Pass + Retry'})
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 font-mono tabular-nums shrink-0">
+          <span className="text-slate-600">
+            Turns: <span className="line-through text-slate-400">{speedTelemetry.legacyToolCalls}</span>{' '}
+            <strong className="text-slate-900">{speedTelemetry.hyperToolCalls}</strong>
+          </span>
+          <span className="text-slate-600">
+            Workers: <strong className="text-slate-900">{plannedSubAgents}</strong>
+          </span>
+          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">
+            ~{speedTelemetry.estimatedSpeedupX}x faster
+          </span>
+        </div>
+      </section>
 
       {/* 4-column Numeric Progress Metrics (Tabular numerals) */}
       <section
@@ -562,23 +603,37 @@ export function BookStudioView({
             </div>
           </div>
 
-          {/* Chunk size & Antigravity ledger sync controls */}
+          {/* Block size, Strict 2-Pass Polish & Antigravity ledger sync controls */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-            <div className="flex items-center gap-2">
-              <label htmlFor="rechunk-words" className="text-xs font-medium text-slate-700">
-                Max Words / Chunk:
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label htmlFor="rechunk-words" className="text-xs font-medium text-slate-700">
+                  Block Size:
+                </label>
+                <select
+                  id="rechunk-words"
+                  value={project.publisher.maxWordsPerChunk}
+                  onChange={(e) => onRechunkBook(Number(e.target.value))}
+                  className="px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-md bg-white"
+                >
+                  <option value={3200}>3,200w (Full-Chapter · Hyper-Swarm v2)</option>
+                  <option value={4000}>4,000w (Max Chapter · Fewest Turns)</option>
+                  <option value={1500}>1,500w (Smart Macro-Block)</option>
+                  <option value={900}>900w (Extended Scene)</option>
+                  <option value={550}>550w (Standard Flash)</option>
+                  <option value={320}>320w (Legacy Micro-Chunk)</option>
+                </select>
+              </div>
+
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={project.publisher.twoPassPolish}
+                  onChange={(e) => onUpdatePublisher({ twoPassPolish: e.target.checked })}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                />
+                <span className="font-medium">Strict 2-Pass Polish</span>
               </label>
-              <select
-                id="rechunk-words"
-                value={project.publisher.maxWordsPerChunk}
-                onChange={(e) => onRechunkBook(Number(e.target.value))}
-                className="px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-md bg-white"
-              >
-                <option value={220}>220w (Ultra-Low 4B)</option>
-                <option value={320}>320w (3.5/3.8 Flash · Safe)</option>
-                <option value={550}>550w (Standard Flash)</option>
-                <option value={900}>900w (High Context)</option>
-              </select>
             </div>
 
             <div className="flex items-center gap-2">

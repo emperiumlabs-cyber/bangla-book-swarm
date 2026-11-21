@@ -25,7 +25,7 @@ import { ManuscriptView } from './components/ManuscriptView';
 import { GlossaryView } from './components/GlossaryView';
 import { PdfPreviewModal } from './components/PdfPreviewModal';
 
-const STORAGE_KEY = 'lipiforge-project-v2';
+const STORAGE_KEY = 'lipiforge-project-v3';
 
 function loadInitialProject(): BookProject {
   try {
@@ -353,6 +353,7 @@ export default function App() {
               onSelectBatchBook={handleSelectBatchBook}
               onRemoveBatchBook={handleRemoveBatchBook}
               onUpdateProjectMeta={updateProjectMeta}
+              onUpdatePublisher={updatePublisher}
               onUpdateAssetCaption={updateAssetCaption}
               onIngestBooks={handleIngestBooks}
               onRechunkBook={rechunkBook}
